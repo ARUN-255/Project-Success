@@ -1,0 +1,22 @@
+# Dependencies & builds
+node_modules/
+dist/
+build/
+target/
+
+# Environment & secrets
+.env
+.env.local
+*.keystore
+!debug.keystore
+
+# Mobile native caches
+.gradle/
+ios/Pods/
+vendor/bundle/
+
+# Editor & OS
+.vscode/
+.idea/
+*.iml
+.DS_Store
