@@ -1,0 +1,54 @@
+server:
+    port: 8080
+
+spring:
+    application:
+        name: mybus
+
+    datasource:
+        url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5433}/${DB_NAME:mybus}
+        username: ${DB_USER:mybus}
+        password: ${DB_PASSWORD:mybus_dev_password}
+        driver-class-name: org.postgresql.Driver 
+    
+    jpa:
+        hibernate:
+            ddl-auto: validate
+        open-in-view: false
+        properties:
+            hibernate:
+                dialect: org.hibernate.dialect.PostgreSQLDialect
+                format_sql: true
+
+    flyway:
+        enabled: true
+        location: classpath:db/migration
+
+    data:
+        redis:
+            host: ${REDIS_HOST:localhost}
+            port: ${REDIS_PORT:6379}
+
+    mail:
+        host: ${MAIL_HOST:smtp.gmail.com}
+        port: ${MAIL_PORT:587}
+        username: ${MAIL_USERNAME:}
+        password: ${MAIL_PASSWORD:}
+        properties:
+            mail:
+                smtp:
+                    auth: true
+                    starttls:
+                        enable: true
+
+    app:
+        jwt:
+            secret: ${JWT_SECRET:12537468488fhfhvbfjkjghrhghghkffjhalhjdvh761265365654654546765653hdghvdhvbnnbnbscadvvdvvacca}
+            expiration-ms: 2592000000
+        otp:
+            expiration-minutes: 10
+        trip:
+            auto-end-minutes: 5
+            ping-interval-seconds: 3
+        owner:
+            bug-report-email: ${OWNER_EMAIL:arun2551a@gmail.com}
