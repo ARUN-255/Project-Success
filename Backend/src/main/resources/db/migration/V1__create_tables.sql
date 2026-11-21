@@ -7,12 +7,16 @@ CREATE TABLE college(
 
 CREATE TABLE admin (
     id BIGSERIAL PRIMARY KEY,
-    college_id BIGINT NOT NULL REFERENCES college(id) ON DELETE CASCADE,
+    college_id BIGINT REFERENCES college(id) ON DELETE RESTRICT,
     email VARCHAR(255) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
     is_owner BOOLEAN NOT NULL DEFAULT FALSE,
     owner_access_requested BOOLEAN NOT NULL DEFAULT FALSE,
     active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    failed_attempts INT NOT NULL DEFAULT 0,
+    locked_until TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (is_owner OR college_id IS NOT NULL)
 );
 
 CREATE TABLE bus (
@@ -69,7 +73,7 @@ CREATE TABLE run_schedule (
 CREATE TABLE driver (
     id BIGSERIAL PRIMARY KEY,
     college_id BIGINT NOT NULL REFERENCES college(id) ON DELETE CASCADE,
-    driver_id VARCHAR(80) NOT NULL UNIQUE,
+    login_id VARCHAR(80) NOT NULL UNIQUE,
     name VARCHAR(150) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     dob DATE NOT NULL,
@@ -91,6 +95,7 @@ CREATE TABLE student (
     year INT NOT NULL,
     dob DATE NOT NULL,
     college_email VARCHAR(255) UNIQUE,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
     failed_dob_attempts INT NOT NULL DEFAULT 0,
     locked_until TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -109,7 +114,7 @@ CREATE TABLE student_route_pref (
 
  CREATE TABLE trip(
     id BIGSERIAL PRIMARY KEY,
-    route_id BIGINT NOT NULL REFERENCES route(id) ON DELETE CASCADE,
+    route_id BIGINT NOT NULL REFERENCES route(id) ON DELETE RESTRICT,
     driver_id BIGINT REFERENCES driver(id) ON DELETE SET NULL,
     trip_type VARCHAR(10) NOT NULL CHECK (trip_type IN ('MORNING', 'EVENING')),
     status VARCHAR(20) NOT NULL CHECK (status IN ('RUNNING', 'ENDED','AUTO_ENDED')),
@@ -153,9 +158,32 @@ CREATE TABLE student_route_pref (
  CREATE TABLE bug_report (
     id BIGSERIAL PRIMARY KEY,
     app_name VARCHAR(50) NOT NULL,
+    app_version VARCHAR(30),
+    device_info VARCHAR(255),
     reporter_id BIGINT,
     role VARCHAR(20) NOT NULL,
     description TEXT NOT NULL,
+    screenshot_url TEXT,
+    emailed BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+ );
+
+ CREATE TABLE email_otp (
+    id BIGSERIAL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL,
+    code_hash VARCHAR(255) NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    attempts INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+ );
+
+ CREATE TABLE alert (
+    id BIGSERIAL PRIMARY KEY,
+    alert_type VARCHAR(30) NOT NULL CHECK (alert_type IN ('MISSED_START', 'AUTO_ENDED', 'SIGNAL_LOST', 'BUS_NOT_RUNNING')),
+    route_id BIGINT REFERENCES route(id) ON DELETE CASCADE,
+    trip_id BIGINT REFERENCES trip(id) ON DELETE SET NULL,
+    request_count INT NOT NULL DEFAULT 0,
+    resolved BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
  );
 
@@ -163,3 +191,5 @@ CREATE TABLE student_route_pref (
  CREATE INDEX idx_ping_trip_time ON location_ping (trip_id, recorded_at DESC);
  CREATE INDEX idx_schedule_route_date ON run_schedule (route_id, run_date);
  CREATE INDEX idx_arrival_stop_time ON stop_arrival (stop_id, arrived_at);
+ CREATE INDEX idx_email_otp_email ON email_otp (email, expires_at DESC);
+ CREATE INDEX idx_alert_resolved ON alert (resolved, created_at DESC);
