@@ -1,0 +1,54 @@
+package com.bronzera.mybus.schedule;
+
+import org.springframework.web.bind.annotation.*;
+
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/schedules")
+public class ScheduleController {
+    private final ScheduleService scheduleService;
+
+    public ScheduleController(ScheduleService scheduleService){
+        this.scheduleService = scheduleService;
+    }
+
+    @GetMapping
+    public List<ScheduleResponse> listSchedules(
+        @RequestParam Long routeId,
+        @RequestParam LocalDate start,
+        @RequestParam LocalDate end){
+            return scheduleService.listSchedules(routeId, start, end).stream().map(ScheduleResponse::from).toList();
+        }
+        @PostMapping
+        public List<ScheduleResponse> upsertSchedules(@RequestBody UpsertSchedulesRequest request){
+            return scheduleService.bulkUpsertSchedules(request.routeId(), request.days()).stream().map(ScheduleResponse::from).toList();
+        }
+        public record UpsertSchedulesRequest(Long routeId, List<ScheduleService.ScheduleDayInput> days){}
+
+        public record ScheduleResponse(
+            Long id,
+            Long routeId,
+            LocalDate runDate,
+            LocalTime morningStart,
+            LocalTime morningEnd,
+            LocalTime eveningStart,
+            LocalTime eveningEnd,
+            boolean running
+        ){
+            public static ScheduleResponse from(RunSchedule s){
+                return new ScheduleResponse(
+                    s.getId(),
+                    s.getRoute().getId(),
+                    s.getRunDate(),
+                    s.getMorningStart(),
+                    s.getMorningEnd(),
+                    s.getEveningStart(),
+                    s.getEveningEnd(),
+                    s.isRunning()
+                );
+            }
+        }
+}
