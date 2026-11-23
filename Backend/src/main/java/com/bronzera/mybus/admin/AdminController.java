@@ -8,6 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -28,6 +29,7 @@ public class AdminController{
         }
 
         @GetMapping
+        @Transactional(readOnly = true)
         public List<AdminResponse> listAdmins(@RequestParam(required = false) Long collegeId){
             List<Admin> admins = (collegeId != null)
             ? adminRepository.findByCollegeId(collegeId)

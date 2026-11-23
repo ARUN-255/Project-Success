@@ -33,13 +33,19 @@ public class RouteService {
             this.collegeRepository = collegeRepository;
             this.entityManager = entityManager;
     }
-    
+
+    @Transactional(readOnly = true)
     public List<Route> listRoutesByCollege(Long collegeId){
         return routeRepository.findByBusCollegeIdAndActiveTrue(collegeId);
     }
 
     @Transactional
     public Stop createStop(Long collegeId, String name, double latitude, double longitude){
+        
+        if(name == null || name.isBlank()){
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Stop name is required");
+        }
+        
         College college = collegeRepository.findById(collegeId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "College not found"));
 
         Stop stop = new Stop();
@@ -58,6 +64,11 @@ public class RouteService {
 
     @Transactional
     public Route createRoute(Long busId, String name, List<StopTimeInput> stops){
+        
+        if (name == null || name.isBlank()){
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Route name is required");
+        }
+        
         Bus bus = busRepository.findById(busId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,"Bus not found"));
 
         Route route = new Route();
@@ -72,6 +83,10 @@ public class RouteService {
                 if (stop == null){
                     throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Stop not found: " + item.stopId());
                 }
+                if(!stop.getCollege().getId().equals(bus.getCollege().getId())){
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Stop does not belong to the bus's college");
+                }
+
                 RouteStop rs = new RouteStop();
                 rs.setRoute(route);
                 rs.setStop(stop);
@@ -83,6 +98,7 @@ public class RouteService {
         }
         return route;
     }
+    @Transactional(readOnly = true)
     public List<RouteStop> getRouteStops(Long routeId, boolean eveningOrder){
         String order = eveningOrder ? "DESC" : "ASC";
         return entityManager.createQuery(

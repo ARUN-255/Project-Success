@@ -25,6 +25,10 @@ public class ScheduleService{
     @Transactional 
     public List<RunSchedule> bulkUpsertSchedules(Long routeId, List<ScheduleDayInput> days){
         Route route = routeRepository.findById(routeId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Route not found"));
+        
+        if(days == null || days.isEmpty()){
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Days list is required");
+        }
 
         return days.stream().map(day -> {
             RunSchedule schedule = scheduleRepository.findByRouteIdAndRunDate(routeId, day.runDate()).orElseGet(() -> {
@@ -42,9 +46,11 @@ public class ScheduleService{
         return scheduleRepository.save(schedule);
         }).toList();
     }
+    @Transactional(readOnly = true)
     public List<RunSchedule> listSchedules(Long routeId, LocalDate start, LocalDate end){
         return scheduleRepository.findByRouteIdAndRunDateBetweenOrderByRunDateAsc(routeId, start, end);
     }
+    @Transactional(readOnly = true)
     public boolean isInsideActiveWindow(Long routeId, LocalDate date, LocalTime now, String tripType){
         return scheduleRepository.findByRouteIdAndRunDate(routeId, date).filter(RunSchedule :: isRunning).map(s -> {
             if("MORNING".equals(tripType)){

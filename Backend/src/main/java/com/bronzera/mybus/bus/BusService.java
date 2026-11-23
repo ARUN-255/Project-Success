@@ -6,6 +6,7 @@ import com.bronzera.mybus.college.CollegeRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -19,14 +20,17 @@ public class BusService {
         this.collegeRepository = collegeRepository;
     }
     
+    @Transactional(readOnly = true)
     public List<Bus> listActiveBuses(Long collegeId){
         return busRepository.findByCollegeIdAndActiveTrue(collegeId);
     }
 
+    @Transactional(readOnly = true)
     public List<Bus> listAllBuses(Long collegeId){
         return busRepository.findByCollegeId(collegeId);
     }
 
+    @Transactional
     public Bus createBus(Long collegeId, String busNumber, String registrationNumber, String busType, String photoUrl){
         if (busNumber == null || busNumber.isBlank() || registrationNumber == null || registrationNumber.isBlank() || busType == null || (!busType.equals("AC") && !busType.equals("NON_AC"))){
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid busNumber, registrationNumber, and busType (AC/NON_AC) are required");
@@ -45,6 +49,8 @@ public class BusService {
         bus.setPhotoUrl(photoUrl);
         return busRepository.save(bus);
      }
+
+     @Transactional
      public Bus setActive(Long busId, boolean active){
         Bus bus = busRepository.findById(busId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Bus not found"));
         bus.setActive(active);
