@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.OffsetDateTime;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -55,16 +56,27 @@ public class DriverService{
         return driverRepository.save(driver);
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = ResponseStatusException.class)
     public Driver resetPassword(Long id, LocalDate dob, String newPassword){
-        if (dob == null || newPassword == null || newPassword.isBlank()){
+        if(dob == null || newPassword == null || newPassword.isBlank()){
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "dob and newPassword are required");
         }
         Driver driver = driverRepository.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Driver not found"));
 
-        if (!driver.getDob().equals(dob)){
+        if(driver.getLockedUntil() != null && driver.getLockedUntil().isAfter(OffsetDateTime.now())){
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many failed attempts. Try again later");
+        }
+
+        if(!driver.getDob().equals(dob)){
+            int attempts = driver.getFailedAttempts() +1;
+            driver.setFailedAttempts(attempts);
+            if(attempts >= 5){
+                driver.setLockedUntil(OffsetDateTime.now().plusMinutes(15));
+            }
+            driverRepository.save(driver);
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Date of birth does not match");
         }
+
         driver.setPasswordHash(passwordEncoder.encode(newPassword));
         driver.setMustChangePassword(true);
         driver.setFailedAttempts(0);

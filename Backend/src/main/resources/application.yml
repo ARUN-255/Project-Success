@@ -51,3 +51,5 @@ spring:
             ping-interval-seconds: 3
         owner:
             bug-report-email: ${OWNER_EMAIL:arun2551a@gmail.com}
+        secret: ${JWT_SECRET}
+        expiration-ms: 2592000000

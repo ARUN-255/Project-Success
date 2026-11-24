@@ -80,7 +80,6 @@ public class StudentController{
         String address,
         String department,
         int year,
-        LocalDate dob,
         String collegeEmail,
         boolean active 
     ){
@@ -93,7 +92,6 @@ public class StudentController{
                 s.getAddress(),
                 s.getDepartment(),
                 s.getYear(),
-                s.getDob(),
                 s.getCollegeEmail(),
                 s.isActive()
             );

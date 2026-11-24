@@ -54,7 +54,6 @@ public class DriverController {
         Long collegeId,
         String loginId,
         String name,
-        LocalDate dob,
         boolean mustChangePassword,
         boolean active 
     ) {
@@ -64,7 +63,6 @@ public class DriverController {
                 d.getCollege().getId(),
                 d.getLoginId(),
                 d.getName(),
-                d.getDob(),
                 d.isMustChangePassword(),
                 d.isActive()
             );
