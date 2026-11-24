@@ -35,6 +35,14 @@ public class JwtService{
         return builder.signWith(key).compact();
     }
 
+    public String generateLookupToken(Long studentId){
+        Date now = new Date();
+        Date expiry = new Date(now.getTime() + 10 * 60 * 1000L);
+        return Jwts.builder()
+        .subject(String.valueOf(studentId)).claim("role", "STUDENT_LOOKUP")
+        .issuedAt(now).expiration(expiry).signWith(key).compact();
+    }
+
     public  Claims parseToken(String token){
         return Jwts.parser().verifyWith(key).build().parseSignedClaims(token).getPayload();
     }

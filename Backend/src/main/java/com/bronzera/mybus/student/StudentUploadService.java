@@ -46,61 +46,65 @@ public class StudentUploadService {
                 .build();
 
         try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8));
-             CSVParser parser = format.parse(reader)) {
+                new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
+            reader.mark(1);
+            if (reader.read() != 0xFEFF) {
+                reader.reset();
+            }
+            try (CSVParser parser = format.parse(reader)) {
+                for (CSVRecord record : parser) {
+                    long rowNum = record.getRecordNumber();
+                    if (!record.isMapped("reg_no") || !record.isMapped("name")
+                            || !record.isMapped("department") || !record.isMapped("year") || !record.isMapped("dob")) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                                "CSV header must include reg_no, name, address, department, year, dob");
+                    }
 
-            for (CSVRecord record : parser) {
-                long rowNum = record.getRecordNumber() + 1;
-                if (!record.isMapped("reg_no") || !record.isMapped("name")
-                        || !record.isMapped("department") || !record.isMapped("year") || !record.isMapped("dob")) {
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                            "CSV header must include reg_no, name, address, department, year, dob");
-                }
+                    String regNo = record.get("reg_no").trim().toUpperCase();
+                    String name = record.get("name").trim();
+                    String address = record.isMapped("address") ? record.get("address").trim() : "";
+                    String department = record.get("department").trim();
+                    String yearStr = record.get("year").trim();
+                    String dobStr = record.get("dob").trim();
 
-                String regNo = record.get("reg_no").trim().toUpperCase();
-                String name = record.get("name").trim();
-                String address = record.isMapped("address") ? record.get("address").trim() : "";
-                String department = record.get("department").trim();
-                String yearStr = record.get("year").trim();
-                String dobStr = record.get("dob").trim();
+                    if (regNo.isEmpty() || name.isEmpty() || department.isEmpty()) {
+                        errors.add("Row " + rowNum + ": reg_no, name, and department are required");
+                        continue;
+                    }
 
-                if (regNo.isEmpty() || name.isEmpty() || department.isEmpty()) {
-                    errors.add("Row " + rowNum + ": reg_no, name, and department are required");
-                    continue;
-                }
+                    int year;
+                    LocalDate dob;
+                    try {
+                        year = Integer.parseInt(yearStr);
+                        dob = LocalDate.parse(dobStr);
+                    } catch (Exception ex) {
+                        errors.add("Row " + rowNum + ": invalid year or dob (use YYYY-MM-DD)");
+                        continue;
+                    }
 
-                int year;
-                LocalDate dob;
-                try {
-                    year = Integer.parseInt(yearStr);
-                    dob = LocalDate.parse(dobStr);
-                } catch (Exception ex) {
-                    errors.add("Row " + rowNum + ": invalid year or dob (use YYYY-MM-DD)");
-                    continue;
-                }
+                    if (year < 1 || year > 4) {
+                        errors.add("Row " + rowNum + ": year must be between 1 and 4");
+                        continue;
+                    }
+                    if (dob.isAfter(LocalDate.now())) {
+                        errors.add("Row " + rowNum + ": dob cannot be in the future");
+                        continue;
+                    }
 
-                if (year < 1 || year > 4) {
-                    errors.add("Row " + rowNum + ": year must be between 1 and 4");
-                    continue;
-                }
-                if (dob.isAfter(LocalDate.now())) {
-                    errors.add("Row " + rowNum + ": dob cannot be in the future");
-                    continue;
-                }
-
-                validCount++;
-                if (!dryRun) {
-                    Student student = studentRepository
-                            .findByCollegeIdAndRegNoIgnoreCase(collegeId, regNo)
-                            .orElseGet(Student::new);
-                    student.setCollege(college);
-                    student.setRegNo(regNo);
-                    student.setName(name);
-                    student.setAddress(address);
-                    student.setDepartment(department);
-                    student.setYear(year);
-                    student.setDob(dob);
-                    studentRepository.save(student);
+                    validCount++;
+                    if (!dryRun) {
+                        Student student = studentRepository
+                                .findByCollegeIdAndRegNoIgnoreCase(collegeId, regNo)
+                                .orElseGet(Student::new);
+                        student.setCollege(college);
+                        student.setRegNo(regNo);
+                        student.setName(name);
+                        student.setAddress(address);
+                        student.setDepartment(department);
+                        student.setYear(year);
+                        student.setDob(dob);
+                        studentRepository.save(student);
+                    }
                 }
             }
         } catch (IOException e) {
