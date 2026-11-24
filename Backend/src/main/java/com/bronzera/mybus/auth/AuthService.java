@@ -1,0 +1,257 @@
+package com.bronzera.mybus.auth;
+
+import com.bronzera.mybus.admin.Admin;
+import com.bronzera.mybus.admin.AdminRepository;
+import com.bronzera.mybus.driver.Driver;
+import com.bronzera.mybus.driver.DriverRepository;
+import com.bronzera.mybus.student.Student;
+import com.bronzera.mybus.student.StudentRepository;
+
+import jakarta.persistence.EntityManager;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.security.SecureRandom;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.util.List;
+
+@Service
+public class AuthService{
+
+    private static final SecureRandom RANDOM = new SecureRandom();
+
+    private final DriverRepository driverRepository;
+    private final StudentRepository studentRepository;
+    private final AdminRepository adminRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final JwtService jwtService;
+    private final JavaMailSender mailSender;
+    private final EntityManager entityManager;
+    private final String mailUsername;
+    private final long otpExpirationMinutes;
+
+    public AuthService(
+        DriverRepository driverRepository,
+        StudentRepository studentRepository,
+        AdminRepository adminRepository,
+        PasswordEncoder passwordEncoder,
+        JwtService jwtService,
+        JavaMailSender mailSender,
+        EntityManager entityManager,
+        @Value("${spring.mail.username:}") String mailUsername,
+        @Value("${app.otp.expiration-minutes:10}") long otpExpirationMinutes
+    ){
+        this.driverRepository = driverRepository;
+        this.studentRepository = studentRepository;
+        this.adminRepository = adminRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.jwtService = jwtService;
+        this.mailSender = mailSender;
+        this.entityManager = entityManager;
+        this.mailUsername = mailUsername;
+        this.otpExpirationMinutes = otpExpirationMinutes;
+    }
+
+    @Transactional(noRollbackFor = ResponseStatusException.class)
+    public DriverLoginResponse driverLogin(String loginId, String password, String deviceId){
+        Driver driver = driverRepository.findByLoginIdIgnoreCase(loginId.trim()).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "ID not registered. Contact the transport office"));
+
+        if(!driver.isActive()){
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Your account has been disabled by Admin. Contact your admin");
+        }
+
+        if(driver.getLockedUntil() != null && driver.getLockedUntil().isAfter(OffsetDateTime.now())){
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Account locked, Try again later");
+        }
+        if (!passwordEncoder.matches(password, driver.getPasswordHash())){
+            int attempts = driver.getFailedAttempts() +1;
+            driver.setFailedAttempts(attempts);
+            if (attempts >= 5){
+                driver.setLockedUntil(OffsetDateTime.now().plusMinutes(15));
+            }
+            driverRepository.save(driver);
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid password");
+        }
+
+        driver.setFailedAttempts(0);
+        driver.setLockedUntil(null);
+        if(deviceId != null && !deviceId.isBlank()){
+            driver.setActiveDeviceId(deviceId.trim());
+        }
+
+        driverRepository.save(driver);
+
+        String token = jwtService.generateToken(driver.getId(), "DRIVER", driver.getCollege().getId());
+        return new DriverLoginResponse(token, driver.getId(), driver.getName(),driver.isMustChangePassword());
+    }
+
+    @Transactional
+    public void driverChangePassword(Long driverId, LocalDate dob, String oldPassword, String newPassword){
+        Driver driver = driverRepository.findById(driverId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "DRiver not found"));
+
+        if(!driver.getDob().equals(dob) || !passwordEncoder.matches(oldPassword, driver.getPasswordHash())){
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "DOB or current password is incorrect");
+        }
+        driver.setPasswordHash(passwordEncoder.encode(newPassword));
+        driver.setMustChangePassword(false);
+        driverRepository.save(driver);
+    }
+
+    @Transactional(noRollbackFor = ResponseStatusException.class)
+    public  AdminLoginResponse adminLogin(String email, String password) {
+        Admin admin = adminRepository.findByEmailIgnoreCase(email.trim()).orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials"));
+
+        if (!admin.isActive()){
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, " Accound disabled");
+        }
+
+        if(admin.getLockedUntil() != null && admin.getLockedUntil().isAfter(OffsetDateTime.now())){
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Account locked. Try again later");
+        }
+
+        if(!passwordEncoder.matches(password, admin.getPasswordHash())){
+            int attempts = admin.getFailedAttempts() +1;
+            admin.setFailedAttempts(attempts);
+            if(attempts >= 5){
+                admin.setLockedUntil(OffsetDateTime.now().plusMinutes(15));
+            }
+            adminRepository.save(admin);
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
+        }
+
+        admin.setFailedAttempts(0);
+        admin.setLockedUntil(null);
+        adminRepository.save(admin);
+
+        String role = admin.isOwner() ? "OWNER" : "ADMIN";
+        Long collegeId = admin.getCollege() != null ? admin.getCollege().getId() : null;
+        String token = jwtService.generateToken(admin.getId(),role, collegeId);
+        return new AdminLoginResponse(token, admin.getId(), role, collegeId);
+    }
+
+    @Transactional(noRollbackFor = ResponseStatusException.class)
+    public StudentPreviewResponse studentLookup(Long collegeId, String regNo, LocalDate dob){
+        Student student = studentRepository.findByCollegeIdAndRegNoIgnoreCase(collegeId, regNo.trim()).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Student not found"));
+
+        if(!student.isActive()){
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Student account is inactive");
+        }
+
+        if(student.getLockedUntil() != null && student.getLockedUntil().isAfter(OffsetDateTime.now())){
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many wrong attempts. Try again later");
+        }
+
+        if (!student.getDob().equals(dob)){
+            int attempts = student.getFailedDobAttempts() +1;
+            student.setFailedDobAttempts(attempts);
+            if (attempts >= 5){
+                student.setLockedUntil(OffsetDateTime.now().plusMinutes(15));
+            }
+
+            studentRepository.save(student);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Date of birth does not match");
+        }
+
+        student.setFailedDobAttempts(0);
+        student.setLockedUntil(null);
+        studentRepository.save(student);
+
+        return new StudentPreviewResponse(
+            student.getId(),
+            student.getRegNo(),
+            student.getName(),
+            student.getAddress(),
+            student.getCollege().getEmailDomain()
+        );
+    }
+    @Transactional
+    public void sendStudentOtp(Long studentId, String email){
+        Student student = studentRepository.findById(studentId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Student not found"));
+
+        String cleanEmail = email.trim().toLowerCase();
+        String domain = "@" + student.getCollege().getEmailDomain().toLowerCase();
+        if(!cleanEmail.endsWith(domain)){
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only college email addresses are allowed");
+        }
+
+        studentRepository.findByCollegeEmailIgnoreCase(cleanEmail).ifPresent(existing -> {
+            if(!existing.getId().equals(student.getId())){
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already linked to another student");
+            }
+        });
+
+        String code = String.format("%06d", RANDOM.nextInt(1_000_000));
+        String codeHash = passwordEncoder.encode(code);
+        OffsetDateTime expiresAt = OffsetDateTime.now().plusMinutes(otpExpirationMinutes);
+
+        entityManager.createNativeQuery(
+            "INSERT INTO email_otp (email, code_hash, expires_at) VALUES (:email, :hash, :exp)"
+        )
+        .setParameter("email", cleanEmail)
+        .setParameter("hash", codeHash)
+        .setParameter("exp", expiresAt)
+        .executeUpdate();
+
+        if(mailUsername != null && !mailUsername.isBlank()){
+            SimpleMailMessage msg = new SimpleMailMessage();
+            msg.setTo(cleanEmail);
+            msg.setSubject("My College Bus - Verification Code");
+            msg.setText("Your 6-digit login code is: " + code + " (valid for " + otpExpirationMinutes + " minutes).");
+            mailSender.send(msg);
+        }else{
+            System.out.println("[DEV OTP]" + cleanEmail + " -> " + code);
+        }
+    }
+
+    @Transactional(noRollbackFor = ResponseStatusException.class)
+    public StudentLoginResponse verifyStudentOtp(Long studentId, String email, String code){
+        String cleanEmail = email.trim().toLowerCase();
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = entityManager.createNativeQuery(
+            "SELECT id, code_hash, expires_at, attempts FROM email_otp WHERE email = :email ORDER BY created_at DESC LIMIT 1").setParameter("email", cleanEmail).getResultList();
+
+            if(rows.isEmpty()){
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No OTP found for this email");
+            }
+
+            Object[] row = rows.get(0);
+            Long otpId = ((Number) row[0]).longValue();
+            String codeHash = (String) row[1];
+            OffsetDateTime expiresAt = ((java.time.Instant) row[2]).atOffset(java.time.ZoneOffset.UTC);
+
+            int attempts = ((Number) row[3]).intValue();
+
+            if(attempts >= 5){
+                throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many failed OTP attempts");
+            }
+
+            if(expiresAt.isBefore(OffsetDateTime.now())){
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OTP expired");
+            }
+
+            if(!passwordEncoder.matches(code.trim(), codeHash)){
+                entityManager.createNativeQuery("UPDATE email_otp SET attempts = attempts + 1 WHERE id = :id").setParameter("id", otpId).executeUpdate();
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid OTP");
+            }
+
+            Student student = studentRepository.findById(studentId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Student not found"));
+            student.setCollegeEmail(cleanEmail);
+            studentRepository.save(student);
+
+            String token = jwtService.generateToken(student.getId(), "STUDENT", student.getCollege().getId());
+            return new StudentLoginResponse(token, student.getId(), student.getName(), cleanEmail);
+    }
+
+    public record DriverLoginResponse(String token, Long driverId, String name, boolean mustChangePassword) {}
+    public record AdminLoginResponse(String token, Long adminId, String role, Long collegeId) {}
+    public record StudentPreviewResponse(Long studentId, String regNo, String name, String address, String emailDomain) {}
+    public record StudentLoginResponse(String token, Long studentId, String name, String email) {}
+}

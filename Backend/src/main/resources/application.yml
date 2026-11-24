@@ -40,16 +40,16 @@ spring:
                     starttls:
                         enable: true
 
-    app:
-        jwt:
-            secret: ${JWT_SECRET:12537468488fhfhvbfjkjghrhghghkffjhalhjdvh761265365654654546765653hdghvdhvbnnbnbscadvvdvvacca}
-            expiration-ms: 2592000000
-        otp:
-            expiration-minutes: 10
-        trip:
-            auto-end-minutes: 5
-            ping-interval-seconds: 3
-        owner:
-            bug-report-email: ${OWNER_EMAIL:arun2551a@gmail.com}
-        secret: ${JWT_SECRET}
+app:
+    jwt:
+        secret: ${JWT_SECRET:12537468488fhfhvbfjkjghrhghghkffjhalhjdvh761265365654654546765653hdghvdhvbnnbnbscadvvdvvacca}
         expiration-ms: 2592000000
+    otp:
+        expiration-minutes: 10
+    trip:
+        auto-end-minutes: 5
+        ping-interval-seconds: 3
+    owner:
+        bug-report-email: ${OWNER_EMAIL:arun2551a@gmail.com}
+    secret: ${JWT_SECRET}
+    expiration-ms: 2592000000
