@@ -47,7 +47,7 @@ public class TripWatcher {
         this.autoEndMinutes = autoEndMinutes;
     }
 
-    @scheduled(fixedDelay = 30000)
+    @Scheduled(fixedDelay = 30000)
     @Transactional
     public void watchTrips(){
         LocalDate today = LocalDate.now(clock);

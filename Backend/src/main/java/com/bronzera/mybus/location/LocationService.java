@@ -37,7 +37,7 @@ public class LocationService{
         LocationRepository locationRepository,
         TripRepository tripRepository,
         StudentRepository studentRepository,
-        RouteService RouteService,
+        RouteService routeService,
         StringRedisTemplate redisTemplate,
         EntityManager entityManager,
         Clock clock
@@ -120,7 +120,7 @@ public class LocationService{
 
         if(!current.isEmpty()){
             double prevLat = Double.parseDouble((String) current.get("lat"));
-            double prevLon = Double.parseLong((String) current.get("lon"));
+            double prevLon = Double.parseDouble((String) current.get("lon"));
             long prevTs = Long.parseLong((String) current.get("ts"));
             double distMeters = distanceMeters(prevLat, prevLon, lat, lon);
 
