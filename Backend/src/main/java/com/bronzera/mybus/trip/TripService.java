@@ -1,0 +1,167 @@
+package com.bronzera.mybus.trip;
+
+import com.bronzera.mybus.driver.Driver;
+import com.bronzera.mybus.driver.DriverRepository;
+import com.bronzera.mybus.route.Route;
+import com.bronzera.mybus.route.RouteRepository;
+import com.bronzera.mybus.schedule.RunSchedule;
+import com.bronzera.mybus.schedule.ScheduleRepository;
+import com.bronzera.mybus.schedule.ScheduleService;
+
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.time.Clock;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
+
+@Service
+public class TripService {
+
+    private final TripRepository tripRepository;
+    private final RouteRepository routeRepository;
+    private final DriverRepository driverRepository;
+    private final ScheduleRepository scheduleRepository;
+    private final ScheduleService scheduleService;
+    private final StringRedisTemplate redisTemplate;
+    private final Clock clock;
+
+    public TripService(
+        TripRepository tripRepository,
+        RouteRepository routeRepository,
+        DriverRepository driverRepository,
+        ScheduleRepository scheduleRepository,
+        ScheduleService scheduleService,
+        StringRedisTemplate redisTemplate,
+        Clock clock
+    ){
+        this.tripRepository = tripRepository;
+        this.routeRepository = routeRepository;
+        this.driverRepository = driverRepository;
+        this.scheduleRepository = scheduleRepository;
+        this.scheduleService = scheduleService;
+        this.redisTemplate = redisTemplate;
+        this.clock = clock;
+    }
+
+    @Transactional
+    public TripResponse startTrip(Long routeId, Long driverId, String deviceId){
+        Driver driver = driverRepository.findById(driverId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Driver not found"));
+
+        if(!driver.isActive()){
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Driver account is disabled");
+        }
+
+        if(driver.getActiveDeviceId() != null && !driver.getActiveDeviceId().equals(deviceId)){
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Driver is active on another device");
+        }
+
+        Route route = routeRepository.findById(routeId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Route not found"));
+
+        if(!route.getBus().getCollege().getId().equals(driver.getCollege().getId())){
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Driver does not belong to this college");
+        }
+
+        LocalDate today = LocalDate.now(clock);
+        LocalTime now = LocalTime.now(clock);
+
+        RunSchedule schedule = scheduleRepository.findByRouteIdAndRunDate(routeId, today).filter(RunSchedule::isRunning).orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Route is not scheduled to run today"));
+
+        Trip.TripType tripType = detectTripType(schedule, now);
+        if(tripType == null || !scheduleService.isInsideActiveWindow(routeId, today, now, tripType.name())){
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Trip cannot start outside the scheduled run window");
+        }
+
+        Trip trip = new Trip();
+        trip.setRoute(route);
+        trip.setDriver(driver);
+        trip.setTripType(tripType);
+        trip.setStatus(Trip.TripStatus.RUNNING);
+        trip.setStartedAt(OffsetDateTime.now(clock));
+
+        try{
+            return TripResponse.from(tripRepository.saveAndFlush(trip));
+        }catch (DataIntegrityViolationException e) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Trip already running");
+        }
+    }
+
+    @Transactional
+    public TripResponse endTrip(Long tripId, Long actorId, boolean isAdmin){
+        Trip trip = tripRepository.findById(tripId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Trip not found"));
+
+        if(trip.getStatus() != Trip.TripStatus.RUNNING){
+            return TripResponse.from(trip);
+        }
+
+        boolean isOwnDriver = trip.getDriver() != null && trip.getDriver().getId().equals(actorId);
+
+        if(!isAdmin && !isOwnDriver){
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the trip driver or an admin can end this trip");
+        }
+
+        trip.setStatus(Trip.TripStatus.ENDED);
+        trip.setEndedAt(OffsetDateTime.now(clock));
+        trip.setEndedBy(isAdmin ? Trip.EndedBy.ADMIN : Trip.EndedBy.DRIVER);
+        Trip saved = tripRepository.save(trip);
+        redisTemplate.delete("trip:" + tripId + ":live");
+        return TripResponse.from(saved);
+    }
+
+    @Transactional
+    public void endTripSystem(Long tripId){
+        Trip trip = tripRepository.findById(tripId).orElse(null);
+        if(trip == null || trip.getStatus() != Trip.TripStatus.RUNNING){
+            return;
+        }
+        trip.setStatus(Trip.TripStatus.AUTO_ENDED);
+        trip.setEndedAt(OffsetDateTime.now(clock));
+        trip.setEndedBy(Trip.EndedBy.AUTO);
+        tripRepository.save(trip);
+        redisTemplate.delete("trip:" + tripId + ":live");
+    }
+
+    @Transactional(readOnly = true)
+    public TripResponse getActiveTrip(Long routeId){
+        return tripRepository.findByRouteIdAndStatus(routeId, Trip.TripStatus.RUNNING).map(TripResponse::from).orElse(null);
+    }
+
+    private Trip.TripType detectTripType(RunSchedule s, LocalTime now){
+        if (s.getMorningStart() != null && s.getMorningEnd() != null && !now.isBefore(s.getMorningStart()) && !now.isAfter(s.getMorningEnd())){
+            return Trip.TripType.MORNING;
+        }
+        if(s.getEveningStart() != null && s.getEveningEnd() != null && !now.isBefore(s.getEveningStart()) && !now.isAfter(s.getEveningEnd())){
+            return Trip.TripType.EVENING;
+        }
+        return null;
+    }
+
+    public record TripResponse(
+        Long id,
+        Long routeId,
+        Long driverId,
+        Trip.TripType tripType,
+        Trip.TripStatus status,
+        OffsetDateTime startedAt,
+        OffsetDateTime endedAt,
+        Trip.EndedBy endedBy
+    ){
+        public static TripResponse from(Trip t){
+            return new TripResponse(
+                t.getId(),
+                t.getRoute().getId(),
+                t.getDriver() != null ? t.getDriver().getId() : null,
+                t.getTripType(),
+                t.getStatus(),
+                t.getStartedAt(),
+                t.getEndedAt(),
+                t.getEndedBy()
+            );
+        }
+    }
+}

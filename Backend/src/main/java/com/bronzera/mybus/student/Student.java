@@ -42,6 +42,9 @@ public class Student {
     @Column(nullable = false)
     private boolean active = true;
 
+    @Column(name = "share_location_allowed", nullable = false)
+    private boolean shareLocationAllowed = false;
+
     @Column(name = "failed_dob_attempts", nullable = false)
     private int failedDobAttempts = 0;
 
@@ -145,5 +148,13 @@ public class Student {
 
     public OffsetDateTime getCreatedAt(){
         return createdAt;
+    }
+
+    public boolean isShareLocationAllowed(){
+        return shareLocationAllowed;
+    }
+
+    public void setShareLocationAllowed(boolean shareLocationAllowed){
+        this.shareLocationAllowed = shareLocationAllowed;
     }
 }
