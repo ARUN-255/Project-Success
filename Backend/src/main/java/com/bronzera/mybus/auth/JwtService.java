@@ -16,18 +16,22 @@ public class JwtService{
 
     private final SecretKey key;
     private final long expirationMs;
+    private final long adminExpirationMs;
 
     public JwtService(
         @Value("${app.jwt.secret}") String secret,
-        @Value("${app.jwt.expiration-ms}") long expirationMs
+        @Value("${app.jwt.expiration-ms}") long expirationMs,
+        @Value("${app.jwt.admin-expiration-ms}") long adminExpirationMs
     ){
         this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
         this.expirationMs = expirationMs;
+        this.adminExpirationMs = adminExpirationMs;
     }
 
     public String generateToken(Long userId, String role, Long collegeId){
         Date now = new Date();
-        Date expiry = new Date(now.getTime() + expirationMs);
+        long ttl = ("ADMIN".equals(role) || "OWNER".equals(role)) ? adminExpirationMs : expirationMs;
+        Date expiry = new Date(now.getTime() + ttl);
         var builder = Jwts.builder().subject(String.valueOf(userId)).claim("role", role).issuedAt(now).expiration(expiry);
         if(collegeId != null) {
             builder.claim("collegeId", collegeId);

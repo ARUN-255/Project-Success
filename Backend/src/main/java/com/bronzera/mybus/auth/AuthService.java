@@ -6,8 +6,15 @@ import com.bronzera.mybus.driver.Driver;
 import com.bronzera.mybus.driver.DriverRepository;
 import com.bronzera.mybus.student.Student;
 import com.bronzera.mybus.student.StudentRepository;
+
 import io.jsonwebtoken.Claims;
 import jakarta.persistence.EntityManager;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
@@ -26,11 +33,13 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.time.Clock;
 
 @Service
 public class AuthService {
 
     private static final SecureRandom RANDOM = new SecureRandom();
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
     private final DriverRepository driverRepository;
     private final StudentRepository studentRepository;
@@ -42,6 +51,8 @@ public class AuthService {
     private final StringRedisTemplate redisTemplate;
     private final String mailUsername;
     private final long otpExpirationMinutes;
+    private final Environment env;
+    private final Clock clock;
 
     public AuthService(
             DriverRepository driverRepository,
@@ -52,6 +63,8 @@ public class AuthService {
             JavaMailSender mailSender,
             EntityManager entityManager,
             StringRedisTemplate redisTemplate,
+            Environment env,
+            Clock clock,
             @Value("${spring.mail.username:}") String mailUsername,
             @Value("${app.otp.expiration-minutes:10}") long otpExpirationMinutes) {
         this.driverRepository = driverRepository;
@@ -64,6 +77,8 @@ public class AuthService {
         this.redisTemplate = redisTemplate;
         this.mailUsername = mailUsername;
         this.otpExpirationMinutes = otpExpirationMinutes;
+        this.env = env;
+        this.clock = clock;
     }
 
     @Transactional(noRollbackFor = ResponseStatusException.class)
@@ -76,14 +91,14 @@ public class AuthService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "Your account has been disabled by Admin. Contact your admin");
         }
-        if (driver.getLockedUntil() != null && driver.getLockedUntil().isAfter(OffsetDateTime.now())) {
+        if (driver.getLockedUntil() != null && driver.getLockedUntil().isAfter(OffsetDateTime.now(clock))) {
             throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Account locked. Try again later");
         }
         if (!passwordEncoder.matches(password, driver.getPasswordHash())) {
             int attempts = driver.getFailedAttempts() + 1;
             driver.setFailedAttempts(attempts);
             if (attempts >= 5) {
-                driver.setLockedUntil(OffsetDateTime.now().plusMinutes(15));
+                driver.setLockedUntil(OffsetDateTime.now(clock).plusMinutes(15));
             }
             driverRepository.save(driver);
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid password");
@@ -120,14 +135,14 @@ public class AuthService {
         if (!admin.isActive()) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Account disabled");
         }
-        if (admin.getLockedUntil() != null && admin.getLockedUntil().isAfter(OffsetDateTime.now())) {
+        if (admin.getLockedUntil() != null && admin.getLockedUntil().isAfter(OffsetDateTime.now(clock))) {
             throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Account locked. Try again later");
         }
         if (!passwordEncoder.matches(password, admin.getPasswordHash())) {
             int attempts = admin.getFailedAttempts() + 1;
             admin.setFailedAttempts(attempts);
             if (attempts >= 5) {
-                admin.setLockedUntil(OffsetDateTime.now().plusMinutes(15));
+                admin.setLockedUntil(OffsetDateTime.now(clock).plusMinutes(15));
             }
             adminRepository.save(admin);
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
@@ -151,14 +166,14 @@ public class AuthService {
         if (!student.isActive()) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Student account is inactive");
         }
-        if (student.getLockedUntil() != null && student.getLockedUntil().isAfter(OffsetDateTime.now())) {
+        if (student.getLockedUntil() != null && student.getLockedUntil().isAfter(OffsetDateTime.now(clock))) {
             throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many wrong attempts. Try again later");
         }
         if (!student.getDob().equals(dob)) {
             int attempts = student.getFailedDobAttempts() + 1;
             student.setFailedDobAttempts(attempts);
             if (attempts >= 5) {
-                student.setLockedUntil(OffsetDateTime.now().plusMinutes(15));
+                student.setLockedUntil(OffsetDateTime.now(clock).plusMinutes(15));
             }
             studentRepository.save(student);
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Date of birth does not match");
@@ -221,7 +236,7 @@ public class AuthService {
 
         String code = String.format("%06d", RANDOM.nextInt(1_000_000));
         String codeHash = passwordEncoder.encode(code);
-        OffsetDateTime expiresAt = OffsetDateTime.now().plusMinutes(otpExpirationMinutes);
+        OffsetDateTime expiresAt = OffsetDateTime.now(clock).plusMinutes(otpExpirationMinutes);
 
         entityManager.createNativeQuery(
                         "INSERT INTO email_otp (email, code_hash, expires_at) VALUES (:email, :hash, :exp)")
@@ -236,8 +251,10 @@ public class AuthService {
             msg.setSubject("My College Bus - Verification Code");
             msg.setText("Your 6-digit login code is: " + code + " (valid for " + otpExpirationMinutes + " minutes).");
             mailSender.send(msg);
+        } else if (env.acceptsProfiles(Profiles.of("local"))){
+            log.info("[LOCAL OTP] {} -> {}", cleanEmail, code);
         } else {
-            System.out.println("[DEV OTP] " + cleanEmail + " -> " + code);
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Email service is not configured");
         }
     }
 
@@ -275,7 +292,7 @@ public class AuthService {
         if (attempts >= 5) {
             throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many failed OTP attempts");
         }
-        if (expiresAt.isBefore(OffsetDateTime.now())) {
+        if (expiresAt.isBefore(OffsetDateTime.now(clock))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OTP expired");
         }
         if (!passwordEncoder.matches(code.trim(), codeHash)) {
