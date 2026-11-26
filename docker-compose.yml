@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: mybus
       POSTGRES_USER: mybus
-      POSTGRES_PASSWORD: mybus_dev_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "5433:5432"
     volumes:
