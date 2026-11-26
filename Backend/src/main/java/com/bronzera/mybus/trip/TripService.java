@@ -7,6 +7,8 @@ import com.bronzera.mybus.route.RouteRepository;
 import com.bronzera.mybus.schedule.RunSchedule;
 import com.bronzera.mybus.schedule.ScheduleRepository;
 import com.bronzera.mybus.schedule.ScheduleService;
+import com.bronzera.mybus.request.Alert;
+import com.bronzera.mybus.request.AlertRepository;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -14,14 +16,20 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.util.Optional;
 
 @Service
 public class TripService {
+
+    private static final Log log = LogFactory.getLog(TripService.class);
+    private final AlertRepository alertRepository;
 
     private final TripRepository tripRepository;
     private final RouteRepository routeRepository;
@@ -38,6 +46,7 @@ public class TripService {
         ScheduleRepository scheduleRepository,
         ScheduleService scheduleService,
         StringRedisTemplate redisTemplate,
+        AlertRepository alertRepository,
         Clock clock
     ){
         this.tripRepository = tripRepository;
@@ -46,6 +55,7 @@ public class TripService {
         this.scheduleRepository = scheduleRepository;
         this.scheduleService = scheduleService;
         this.redisTemplate = redisTemplate;
+        this.alertRepository = alertRepository;
         this.clock = clock;
     }
 
@@ -59,6 +69,11 @@ public class TripService {
 
         if(driver.getActiveDeviceId() != null && !driver.getActiveDeviceId().equals(deviceId)){
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Driver is active on another device");
+            }
+
+         Optional<Trip> existing = tripRepository.findByRouteIdAndStatus(routeId, Trip.TripStatus.RUNNING);
+            if(existing.isPresent() && existing.get().getDriver() != null && existing.get().getDriver().getId().equals(driverId)){
+                return TripResponse.from(existing.get());
         }
 
         Route route = routeRepository.findById(routeId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Route not found"));
@@ -109,12 +124,12 @@ public class TripService {
         trip.setEndedAt(OffsetDateTime.now(clock));
         trip.setEndedBy(isAdmin ? Trip.EndedBy.ADMIN : Trip.EndedBy.DRIVER);
         Trip saved = tripRepository.save(trip);
-        redisTemplate.delete("trip:" + tripId + ":live");
+        deleteRedisLive(tripId);
         return TripResponse.from(saved);
     }
 
     @Transactional
-    public void endTripSystem(Long tripId){
+    public void autoEndTrip(Long tripId){
         Trip trip = tripRepository.findById(tripId).orElse(null);
         if(trip == null || trip.getStatus() != Trip.TripStatus.RUNNING){
             return;
@@ -123,7 +138,37 @@ public class TripService {
         trip.setEndedAt(OffsetDateTime.now(clock));
         trip.setEndedBy(Trip.EndedBy.AUTO);
         tripRepository.save(trip);
-        redisTemplate.delete("trip:" + tripId + ":live");
+        deleteRedisLive(tripId);
+
+        Alert alert = new Alert();
+        alert.setAlertType(Alert.AlertType.AUTO_ENDED);
+        alert.setRoute(trip.getRoute());
+        alert.setTrip(trip);
+        alert.setAlertDate(LocalDate.now(clock));
+        alert.setTripType(trip.getTripType());
+        try {
+            alertRepository.saveAndFlush(alert);
+        } catch (DataIntegrityViolationException ignored){
+
+        }
+    }
+
+    @Transactional
+    public void recordMissedStart(Long routeId, LocalDate alertDate, Trip.TripType tripType){
+        Route route = routeRepository.findById(routeId).orElse(null);
+        if(route == null){
+            return;
+        }
+        Alert alert = new Alert();
+        alert.setAlertType(Alert.AlertType.MISSED_START);
+        alert.setRoute(route);
+        alert.setAlertDate(alertDate);
+        alert.setTripType(tripType);
+        try{
+            alertRepository.saveAndFlush(alert);
+        }catch (DataIntegrityViolationException ignored){
+
+        }
     }
 
     @Transactional(readOnly = true)
@@ -139,6 +184,27 @@ public class TripService {
             return Trip.TripType.EVENING;
         }
         return null;
+    }
+
+    public Trip.TripType detectCurrentOrNextTripType(Long routeId) {
+        LocalDate today = LocalDate.now(clock);
+        LocalTime now = LocalTime.now(clock);
+        RunSchedule s = scheduleRepository.findByRouteIdAndRunDate(routeId, today).orElse(null);
+        if(s != null ){
+            Trip.TripType open = detectTripType(s, now);
+            if(open != null) return open;
+            if(s.getMorningEnd() != null && !now.isAfter(s.getMorningEnd())) return Trip.TripType.MORNING;
+            if(s.getEveningEnd() != null) return Trip.TripType.EVENING;
+        }
+        return now.isBefore(LocalTime.NOON) ? Trip.TripType.MORNING : Trip.TripType.EVENING;
+    }
+
+    private void deleteRedisLive(Long tripId){
+        try{
+            redisTemplate.delete("trip:" + tripId + ":live");
+        } catch (Exception e){
+            log.warn("Could not delete Redis live key for trip " + tripId + ": " + e.getMessage());
+        }
     }
 
     public record TripResponse(

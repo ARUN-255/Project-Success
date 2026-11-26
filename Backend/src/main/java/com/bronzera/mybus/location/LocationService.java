@@ -16,6 +16,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.Clock;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -24,6 +27,8 @@ import java.util.Map;
 
 @Service
 public class LocationService{
+
+    private static final Logger log = LoggerFactory.getLogger(LocationService.class);
 
     private final LocationRepository locationRepository;
     private final TripRepository tripRepository;
@@ -52,16 +57,19 @@ public class LocationService{
     }
 
     @Transactional
-    public void recordDriverPing(Long tripId, Long driverId, double lat, double lon, Double speedMps, Double accuracy){
+    public void recordDriverPing(Long tripId, Long driverId, double lat, double lon, Double speedMps, Double accuracy, Long clientTimeMs){
         Trip trip = tripRepository.findById(tripId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Trip not found"));
         if(trip.getDriver() == null || !trip.getDriver().getId().equals(driverId)){
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not the trip driver");
         }
-        processPing(trip, LocationPing.PingSource.DRIVER, driverId, lat, lon, speedMps, accuracy);
+        if(trip.getStatus() != Trip.TripStatus.RUNNING){
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Trip has already ended");
+        }
+        processPing(trip, LocationPing.PingSource.DRIVER, driverId, lat, lon, speedMps, accuracy, clientTimeMs);
     }
 
     @Transactional
-    public void recordStudentPing(Long routeId, Long studentId, double lat, double lon, Double speedMps, Double accuracy){
+    public void recordStudentPing(Long routeId, Long studentId, double lat, double lon, Double speedMps, Double accuracy, Long clientTimeMs){
         Trip trip = tripRepository.findByRouteIdAndStatus(routeId, Trip.TripStatus.RUNNING).orElse(null);
 
         if(trip == null){
@@ -89,7 +97,15 @@ public class LocationService{
                 return;
             }
 
-            processPing(trip, LocationPing.PingSource.STUDENT, studentId, lat, lon, speedMps, accuracy);
+            boolean evening = trip.getTripType() == Trip.TripType.EVENING;
+            List<RouteStop> stops = routeService.getRouteStops(routeId, evening);
+            boolean nearRoute = stops.stream().anyMatch(rs -> distanceMeters(lat, lon, rs.getStop().getLatitude(), rs.getStop().getLongitude()) <= 2000.0);
+
+            if(!nearRoute){
+                return;
+            }
+
+            processPing(trip, LocationPing.PingSource.STUDENT, studentId, lat, lon, speedMps, accuracy, clientTimeMs);
     }
 
     private void processPing(
@@ -99,7 +115,8 @@ public class LocationService{
         double lat,
         double lon,
         Double speedMps,
-        Double accuracy
+        Double accuracy,
+        Long clientTimeMs
     ){
         if(lat < -90 || lat > 90 || lon < -180 || lon > 180 || (lat == 0.0 && lon == 0.0 )){
             return;
@@ -116,40 +133,50 @@ public class LocationService{
         double speedKmh = toKmh(speedMps);
         long nowMs = clock.millis();
         String liveKey = "trip:" + trip.getId() + ":live";
-        Map<Object, Object> current = redisTemplate.opsForHash().entries(liveKey);
+        
+        Boolean writeDb = Boolean.TRUE;
+        try{
+            Map<Object, Object> current = redisTemplate.opsForHash().entries(liveKey);
+            if(!current.isEmpty()){
+                double prevLat = Double.parseDouble((String) current.get("lat"));
+                double prevLon = Double.parseDouble((String) current.get("lon"));
+                long prevTs = Long.parseLong((String) current.get("ts"));
 
-        if(!current.isEmpty()){
-            double prevLat = Double.parseDouble((String) current.get("lat"));
-            double prevLon = Double.parseDouble((String) current.get("lon"));
-            long prevTs = Long.parseLong((String) current.get("ts"));
-            double distMeters = distanceMeters(prevLat, prevLon, lat, lon);
+                if(clientTimeMs != null && clientTimeMs < prevTs){
+                    return;
+                }
 
-            if (source == LocationPing.PingSource.STUDENT && distMeters > 300.0){
-                return;
+                double distMeters = distanceMeters(prevLat, prevLon, lat, lon);
+                if(source == LocationPing.PingSource.STUDENT && distMeters > 300.0){
+                    return;
+                }
+
+                double dtSeconds = Math.max(0.0, (nowMs - prevTs) / 1000.0);
+                if(distMeters > 50.0 + 33.0 * dtSeconds){
+                    return;
+                }
+
+                if(!shouldReplaceLive(current, source, accuracy, nowMs, prevTs)){
+                    return;
+                }
             }
 
-            double dtHours = (nowMs - prevTs) / 3_600_000.0;
-            if(dtHours > 0 && (distMeters / 1000.0) / dtHours > 120.0){
-                return;
-            }
+            String accStr = accuracy != null ? String.valueOf(accuracy) : "100.0";
+            redisTemplate.opsForHash().putAll(liveKey, Map.of(
+                "lat", String.valueOf(lat),
+                "lon", String.valueOf(lon),
+                "speed", String.valueOf(speedKmh),
+                "accuracy", accStr,
+                "ts", String.valueOf(nowMs),
+                "source", source.name()
+            ));
+            redisTemplate.expire(liveKey, Duration.ofSeconds(60));
 
-            if(!shouldReplaceLive(current, source, accuracy, nowMs, prevTs)){
-                return;
-            }
+            writeDb = redisTemplate.opsForValue().setIfAbsent("trip:" + trip.getId() + ":db_throttle", "1", Duration.ofSeconds(6));
         }
-
-        String accStr = accuracy != null ? String.valueOf(accuracy) : "100.0";
-        redisTemplate.opsForHash().putAll(liveKey, Map.of(
-            "lat", String.valueOf(lat),
-            "lon", String.valueOf(lon),
-            "speed", String.valueOf(speedKmh),
-            "accuracy", accStr,
-            "ts", String.valueOf(nowMs),
-            "source", source.name()
-        ));
-        redisTemplate.expire(liveKey, Duration.ofSeconds(60));
-
-        Boolean writeDb = redisTemplate.opsForValue().setIfAbsent("trip:" + trip.getId() + ":db_throttle", "1", Duration.ofSeconds(6));
+            catch (Exception e){
+            log.warn("Redis error during ping for trip {}: {}", trip.getId(), e.getMessage());
+        }
 
         if(Boolean.TRUE.equals(writeDb)){
             LocationPing ping = new LocationPing();
@@ -192,26 +219,42 @@ public class LocationService{
 
     private void checkStopArrival(Trip trip, double lat, double lon){
         boolean evening = trip.getTripType() == Trip.TripType.EVENING;
-        List<RouteStop> stops = routeService.getRouteStops(trip.getRoute().getId(),evening);
-        OffsetDateTime now = OffsetDateTime.now(clock);
-        for (RouteStop rs : stops){
-            double dist = distanceMeters(lat, lon, rs.getStop().getLatitude(),rs.getStop().getLongitude());
+        List<RouteStop> stops = routeService.getRouteStops(trip.getRoute().getId(), evening);
 
-            if(dist <= 80.0){
-                entityManager.createNativeQuery("INSERT INTO stop_arrival (trip_id, stop_id, arrived_at) " + "VALUES (:tid, :sid, :at) ON CONFLICT DO NOTHING")
-                .setParameter("tid", trip.getId())
-                .setParameter("sid", rs.getStop().getId())
-                .setParameter("at",now)
-                .executeUpdate();
-            }
+        @SuppressWarnings("unchecked")
+        List<Number> arrived = entityManager.createNativeQuery("SELECT stop_id FROM stop_arrival WHERE trip_id = :tid").setParameter("tid", trip.getId()).getResultList();
+
+        java.util.Set<Long> arrivedIds = new java.util.HashSet<>();
+        for(Number n : arrived) arrivedIds.add(n.longValue());
+
+        RouteStop nextStop = stops.stream().filter(rs -> !arrivedIds.contains(rs.getStop().getId())).findFirst().orElse(null);
+
+        if(nextStop == null) return;
+
+        double dist = distanceMeters(lat, lon, nextStop.getStop().getLatitude(), nextStop.getStop().getLongitude());
+
+        if(dist <= 80.0){
+            entityManager.createNativeQuery("INSERT INTO stop_arrival (trip_id, stop_id, arrived_at) " + "VALUES (:tid, :sid, :at) ON CONFLICT DO NOTHING")
+            .setParameter("tid", trip.getId())
+            .setParameter("sid", nextStop.getStop().getId())
+            .setParameter("at", OffsetDateTime.now(clock))
+            .executeUpdate();
         }
     }
+
+    @Transactional(readOnly = true)
+    public LiveLocationResponse getLiveLocationByRoute(Long routeId){
+        Trip trip = tripRepository.findByRouteIdAndStatus(routeId, Trip.TripStatus.RUNNING).orElse(null);
+        return trip != null ? getLiveLocation(trip.getId()) : null;
+    }
+
+    @Transactional(readOnly = true)
     public LiveLocationResponse getLiveLocation(Long tripId){
+        if (tripId == null) return null;
+        try{
         Map<Object, Object> data = redisTemplate.opsForHash().entries("trip:" + tripId + ":live");
 
-        if(data.isEmpty()){
-            return null;
-        }
+        if(!data.isEmpty()){
 
         long ts = Long.parseLong((String) data.get("ts"));
         long ageSeconds = Math.max(0, (clock.millis() - ts) / 1000L);
@@ -225,6 +268,24 @@ public class LocationService{
             ageSeconds > 20
         );
     }
+    return null;
+        } catch (Exception e){
+            log.warn("Redis live read failed for trip {}, falling back to DB: {}", tripId, e.getMessage());
+            return locationRepository.findTopByTripIdOrderByRecordedAtDesc(tripId).map(p -> {
+                long ageSeconds = Math.max(0, (clock.millis() - p.getRecordedAt().toInstant().toEpochMilli()) / 1000L);
+                return new LiveLocationResponse(
+                    p.getLatitude(),
+                    p.getLongitude(),
+                    p.getSpeed() != null ? p.getSpeed() : 0.0,
+                    p.getAccuracy() != null ? p.getAccuracy() : 100.0,
+                    p.getSource().name(),
+                    ageSeconds,
+                    ageSeconds > 20
+                );
+            })
+            .orElse(null);
+        }
+        }
 
     @Scheduled(cron = "0 0 3 * * *", zone = "Asia/Kolkata")
     @Transactional

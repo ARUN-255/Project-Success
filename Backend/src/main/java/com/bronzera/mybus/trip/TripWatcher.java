@@ -48,7 +48,6 @@ public class TripWatcher {
     }
 
     @Scheduled(fixedDelay = 30000)
-    @Transactional
     public void watchTrips(){
         LocalDate today = LocalDate.now(clock);
         LocalTime now = LocalTime.now(clock);
@@ -66,8 +65,7 @@ public class TripWatcher {
                     "SELECT MAX(rs." + field + ") FROM RouteStop rs WHERE rs.route.id = :routeId",LocalTime.class).setParameter("routeId", trip.getRoute().getId()).getSingleResult();
 
                     if (lastStopTime != null && now.isAfter(lastStopTime.plusMinutes(autoEndMinutes))){
-                        tripService.endTripSystem(trip.getId());
-                        insertAlert("AUTO_ENDED", trip.getRoute().getId(), trip.getId(),LocalDate.now(clock), trip.getTripType().name());
+                        tripService.autoEndTrip(trip.getId());
                     }
             }catch (Exception e){
                 log.warn("Auto-end check failed for trip {}: {}", trip.getId(), e.getMessage());
@@ -87,30 +85,18 @@ public class TripWatcher {
                     boolean started = tripRepository.existsByRouteIdAndTripTypeAndStartedAtBetween(routeId, Trip.TripType.MORNING, dayStart, dayEnd);
                     
                     if(!started) {
-                        insertAlert("MISSED_START", routeId, null, today, "MORNING");
+                        tripService.recordMissedStart(routeId, today, Trip.TripType.MORNING);
                     }
                 }
                 if(s.getEveningStart() != null && now.isAfter(s.getEveningStart().plusMinutes(5))){
                     boolean started = tripRepository.existsByRouteIdAndTripTypeAndStartedAtBetween(routeId, Trip.TripType.EVENING, dayStart, dayEnd);
                     if(!started) {
-                        insertAlert("MISSED_START", routeId, null, today, "EVENING");
+                        tripService.recordMissedStart(routeId, today, Trip.TripType.EVENING);
                     }
                 }
             } catch (Exception e) {
                 log.warn("Missed-start check failed for schedule {}: {}", s.getId(), e.getMessage());
             }
         }
-    }
-
-    private void insertAlert(String type, Long routeId, Long tripId, LocalDate alertDate, String tripType){
-
-        entityManager.createNativeQuery(
-            "INSERT INTO alert (alert_type, route_id, trip_id, alert_date, trip_type) " + "VALUES (:type, :routeId,:tripId, :alertDate, :tripType) ON CONFLICT DO NOTHING")
-            .setParameter("type", type)
-            .setParameter("routeId", routeId)
-            .setParameter("tripId", tripId)
-            .setParameter("alertDate", alertDate)
-            .setParameter("tripType", tripType)
-            .executeUpdate();
     }
 }

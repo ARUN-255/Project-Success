@@ -1,5 +1,7 @@
 package com.bronzera.mybus.trip;
 
+import com.bronzera.mybus.eta.EtaService;
+
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 
@@ -12,9 +14,11 @@ import org.springframework.web.bind.annotation.*;
 public class TripController {
 
     private final TripService tripService;
+    private final EtaService etaService;
 
-    public TripController(TripService tripService){
+    public TripController(TripService tripService , EtaService etaService){
         this.tripService = tripService;
+        this.etaService = etaService;
     }
 
     @PostMapping("/start")
@@ -38,6 +42,12 @@ public class TripController {
     public ResponseEntity<TripService.TripResponse> getActiveTrip(@RequestParam Long routeId){
         TripService.TripResponse active = tripService.getActiveTrip(routeId);
         return active != null ? ResponseEntity.ok(active) : ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/eta")
+    public EtaService.EtaResponse getEta(@RequestParam Long routeId, @RequestParam Long stopId){
+        Trip.TripType tripType = tripService.detectCurrentOrNextTripType(routeId);
+        return etaService.estimateEta(routeId, stopId, tripType);
     }
 
     public record StartTripRequest(

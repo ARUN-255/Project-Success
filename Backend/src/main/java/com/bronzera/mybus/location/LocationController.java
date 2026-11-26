@@ -27,7 +27,8 @@ public class LocationController{
             request.latitude(),
             request.longitude(),
             request.speedMps(),
-            request.accuracy()
+            request.accuracy(),
+            request.clientTimeMs()
         );
         return ResponseEntity.noContent().build();
     }
@@ -41,14 +42,19 @@ public class LocationController{
             request.latitude(),
             request.longitude(),
             request.speedMps(),
-            request.accuracy()
+            request.accuracy(),
+            request.clientTimeMs()
         );
         return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/live")
-    public ResponseEntity<LocationService.LiveLocationResponse> getLive(@RequestParam Long tripId){
-        LocationService.LiveLocationResponse live = locationService.getLiveLocation(tripId);
+    public ResponseEntity<LocationService.LiveLocationResponse> getLive(
+        @RequestParam(required = false) Long tripId,
+        @RequestParam(required = false) Long routeId){
+        LocationService.LiveLocationResponse live = (routeId != null)
+        ? locationService.getLiveLocationByRoute(routeId)
+        : locationService.getLiveLocation(tripId);
         return live != null ? ResponseEntity.ok(live) : ResponseEntity.noContent().build();
     }
 
@@ -58,7 +64,8 @@ public class LocationController{
         @NotNull @DecimalMin("-90.0") @DecimalMax("90.0") Double latitude,
         @NotNull @DecimalMin("-180.0") @DecimalMax("180.0") Double longitude,
         Double speedMps,
-        Double accuracy
+        Double accuracy,
+        Long clientTimeMs
     ) {}
 
     public record StudentPingRequest(
@@ -67,6 +74,7 @@ public class LocationController{
         @NotNull @DecimalMin("-90.0") @DecimalMax("90.0") Double latitude,
         @NotNull @DecimalMin("-180.0") @DecimalMax("180.0") Double longitude,
         Double speedMps,
-        Double accuracy
+        Double accuracy,
+        Long clientTimeMs
     ) {}
 }
