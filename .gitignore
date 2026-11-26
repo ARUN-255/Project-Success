@@ -3,22 +3,36 @@ node_modules/
 dist/
 build/
 target/
-
-# Environment & secrets
-.env
-.env.local
-*.keystore
-!debug.keystore
-
-# Mobile native caches
 .gradle/
 ios/Pods/
 vendor/bundle/
+vendor/bundles/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+**/application.yml
+**/application.yaml
+**/application-local.yml
+**/application-local.yaml
+**/secrets.yml
+**/secrets.yaml
+credentials.json
+
+# Certificates and private keys
+*.keystore
+*.jks
+*.pem
+*.key
+
+# Temporary and backup files
+*.save
+*.bak
+*.swp
 
 # Editor & OS
 .vscode/
 .idea/
 *.iml
 .DS_Store
-
-Backend/src/main/resources/application.yml
