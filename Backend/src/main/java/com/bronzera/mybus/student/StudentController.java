@@ -6,6 +6,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+
 import java.time.LocalDate;
 import java.util.List;
 
@@ -61,6 +65,26 @@ public class StudentController{
     public StudentResponse resetStudent(@PathVariable Long id){
         return StudentResponse.from(studentService.resetStudent(id));
     }
+
+    @PatchMapping("/{id}/share-location")
+    public StudentResponse setShareLocation(@PathVariable Long id, @RequestParam boolean allowed){
+        return StudentResponse.from(studentService.setShareLocationAllowed(id, allowed));
+    }
+
+    @PutMapping("/{id}/route-pref")
+    public ResponseEntity<Void> saveRoutePref(
+        @PathVariable Long id,
+        @Valid @RequestBody RoutePrefRequest request 
+    ){
+        studentService.saveRoutePreference(id, request.routeId(), request.stopId(), request.tripType());
+        return ResponseEntity.noContent().build();
+    }
+
+    public record RoutePrefRequest(
+        @NotNull Long routeId,
+        @NotNull Long stopId,
+        @NotNull String tripType 
+    ) {}
 
     public record CreateStudentRequest(
         Long collegeId,

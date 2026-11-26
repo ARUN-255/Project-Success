@@ -25,7 +25,7 @@ import java.util.List;
 @Service
 public class EtaService{
 
-    public enum EtaBasis { LIVE, LEARNED, SCHEDULED, PASSED}
+    public enum EtaBasis { LIVE, LEARNED, SCHEDULED, NOT_STARTED, PASSED}
 
     private final TripRepository tripRepository;
     private final RouteService routeService;
@@ -68,20 +68,27 @@ public class EtaService{
 
             LocationService.LiveLocationResponse live = locationService.getLiveLocation(runningTrip.getId());
             if(live != null && !live.stale()){
-                double roadMeters = LocationService.distanceMeters(live.lat(), live.lon(), target.getStop().getLatitude(), target.getStop().getLongitude()) * 1.3 ;
+                double roadMeters = remainingRoadMeters(runningTrip.getId(), stops, target, live.lat(), live.lon());
                 double speedKmh = Math.max(20.0, live.speedKmh());
                 long etaSeconds = Math.max(0, Math.round((roadMeters / 1000.0) / speedKmh * 3600.0));
-                return new EtaResponse(etaSeconds, now.plusSeconds(etaSeconds),EtaBasis.LIVE);
+                return new EtaResponse(etaSeconds, now.plusSeconds(etaSeconds), EtaBasis.LIVE);
             }
         }
         Long learnedDelaySeconds = getLearnedDelaySeconds(routeId, stopId, tripType, scheduledTime);
         if(learnedDelaySeconds != null){
             LocalTime predicted = scheduledTime.plusSeconds(learnedDelaySeconds);
-            long etaSeconds = Math.max(0, ChronoUnit.SECONDS.between(now, predicted));
+            if(now.isAfter(predicted)){
+                return new EtaResponse(0, predicted, EtaBasis.NOT_STARTED);
+            }
+            long etaSeconds = ChronoUnit.SECONDS.between(now, predicted);
             return new EtaResponse(etaSeconds, predicted, EtaBasis.LEARNED);
         }
 
-        long scheduledEta = Math.max(0, ChronoUnit.SECONDS.between(now, scheduledTime));
+        if (now.isAfter(scheduledTime)){
+            return new EtaResponse(0, scheduledTime, EtaBasis.NOT_STARTED);
+        }
+
+        long scheduledEta = ChronoUnit.SECONDS.between(now, scheduledTime);
         return new EtaResponse(scheduledEta, scheduledTime, EtaBasis.SCHEDULED);
     }
 
@@ -106,6 +113,35 @@ public class EtaService{
         }
         return false;
     }
+
+    private double remainingRoadMeters(Long tripId, List<RouteStop> stops, RouteStop target, double lat, double lon){
+        @SuppressWarnings("unchecked")
+        List<Number> arrived = entityManager.createNativeQuery(
+            "SELECT stop_id FROM stop_arrival WHERE trip_id = :tid"
+        )
+        .setParameter("tid", tripId)
+        .getResultList();       
+        java.util.Set<Long> arrivedIds = new java.util.HashSet<>();
+        for(Number n : arrived) arrivedIds.add(n.longValue());
+
+        int nextIdx = 0;
+        while (nextIdx < stops.size() && arrivedIds.contains(stops.get(nextIdx).getStop().getId())){
+            nextIdx++;
+        }
+        int targetIdx = stops.indexOf(target);
+        if(nextIdx > targetIdx){
+            return 0.0;
+        }
+
+        double total = LocationService.distanceMeters(lat, lon, stops.get(nextIdx).getStop().getLatitude(),stops.get(nextIdx).getStop().getLongitude());
+        for(int i = nextIdx; i < targetIdx; i++){
+            RouteStop a = stops.get(i);
+            RouteStop b = stops.get(i + 1);
+            total += LocationService.distanceMeters(a.getStop().getLatitude(), a.getStop().getLongitude(), b.getStop().getLatitude(), b.getStop().getLongitude());
+        }
+        return total * 1.3;
+    }
+
     private Long getLearnedDelaySeconds(Long routeId, Long stopId, Trip.TripType tripType, LocalTime scheduledTime) {
         boolean isSaturday = LocalDate.now(clock).getDayOfWeek() == DayOfWeek.SATURDAY;
         String dayGroup = isSaturday ? "SAT" : "WKDAY";

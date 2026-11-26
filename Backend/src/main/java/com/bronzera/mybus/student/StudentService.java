@@ -8,6 +8,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import jakarta.persistence.EntityManager;
+
 import java.time.LocalDate;
 import java.util.List;
 
@@ -16,10 +18,12 @@ public class StudentService{
 
     private final StudentRepository studentRepository;
     private final CollegeRepository collegeRepository;
+    private final EntityManager entityManager;
 
-    public StudentService(StudentRepository studentRepository, CollegeRepository collegeRepository){
+    public StudentService(StudentRepository studentRepository, CollegeRepository collegeRepository, EntityManager entityManager){
         this.studentRepository = studentRepository;
         this.collegeRepository = collegeRepository;
+        this.entityManager = entityManager;
     }
 
     @Transactional(readOnly = true)
@@ -75,5 +79,30 @@ public class StudentService{
         student.setFailedDobAttempts(0);
         student.setLockedUntil(null);
         return studentRepository.save(student);
+    }
+
+    @Transactional
+    public Student setShareLocationAllowed(Long id, boolean allowed){
+        Student student = studentRepository.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Student not found"));
+        student.setShareLocationAllowed(allowed);
+        return studentRepository.save(student);
+    }
+
+    @Transactional
+    public void saveRoutePreference(Long studentId, Long routeId, Long stopId, String tripType){
+        if(!"MORNING".equals(tripType) && !"EVENING".equals(tripType)){
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "tripType must be MORNING or EVENING");
+        }
+        entityManager.createNativeQuery(
+            "INSERT INTO student_route_pref (student_id, route_id, stop_id, trip_type, updated_at) "
+            + "VALUES (:sid, :rid, :stid, :tt, NOW()) "
+            + "ON CONFLICT (student_id, trip_type) DO UPDATE "
+            + "SET route_id = EXCLUDED.route_id, stop_id = EXCLUDED.stop_id, updated_at = NOW() "
+        )
+        .setParameter("sid", studentId)
+        .setParameter("rid", routeId)
+        .setParameter("stid", stopId)
+        .setParameter("tt", tripType)
+        .executeUpdate();
     }
 }
