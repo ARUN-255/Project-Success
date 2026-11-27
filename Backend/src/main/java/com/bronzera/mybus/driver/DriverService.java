@@ -8,10 +8,13 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 
 import java.time.OffsetDateTime;
 import java.time.LocalDate;
-import java.util.List;
+
 
 @Service
 public class DriverService{
@@ -30,12 +33,16 @@ public class DriverService{
     }
 
     @Transactional(readOnly = true)
-    public List<Driver> listDrivers(Long collegeId){
-        return driverRepository.findByCollegeId(collegeId);
+    public Page<DriverResponse> listDrivers(Long collegeId, int page, int size){
+        int safePage = Math.max(0, page);
+        int safeSize = Math.min(100, Math.max(1, size));
+        return driverRepository.findByCollegeId(
+            collegeId, PageRequest.of(safePage, safeSize, Sort.by("id").ascending())
+        ).map(DriverResponse::from);
     }
 
     @Transactional
-    public Driver createDriver(Long collegeId, String loginId, String name, String password, LocalDate dob){
+    public DriverResponse createDriver(Long collegeId, String loginId, String name, String password, LocalDate dob){
 
         if(loginId == null || loginId.isBlank() || name == null || name.isBlank() || password == null || password.isBlank() || dob == null){
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "loginId, name, password, and dob are required");
@@ -53,11 +60,11 @@ public class DriverService{
         driver.setPasswordHash(passwordEncoder.encode(password));
         driver.setDob(dob);
         driver.setMustChangePassword(true);
-        return driverRepository.save(driver);
+        return DriverResponse.from(driverRepository.save(driver));
     }
 
     @Transactional(noRollbackFor = ResponseStatusException.class)
-    public Driver resetPassword(Long id, LocalDate dob, String newPassword){
+    public DriverResponse resetPassword(Long id, LocalDate dob, String newPassword){
         if(dob == null || newPassword == null || newPassword.isBlank()){
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "dob and newPassword are required");
         }
@@ -81,13 +88,33 @@ public class DriverService{
         driver.setMustChangePassword(true);
         driver.setFailedAttempts(0);
         driver.setLockedUntil(null);
-        return driverRepository.save(driver);
+        return DriverResponse.from(driverRepository.save(driver));
     }
 
     @Transactional
-    public Driver setActive(Long id, boolean active){
+    public DriverResponse setActive(Long id, boolean active){
         Driver driver = driverRepository.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Driver not found"));
         driver.setActive(active);
-        return driverRepository.save(driver);
+        return DriverResponse.from(driverRepository.save(driver));
+    }
+
+    public record DriverResponse(
+        Long id,
+        Long collegeId,
+        String loginId,
+        String name,
+        boolean mustChangePassword,
+        boolean active 
+    ){
+        public static DriverResponse from(Driver d){
+            return new DriverResponse(
+                d.getId(),
+                d.getCollege().getId(),
+                d.getLoginId(),
+                d.getName(),
+                d.isMustChangePassword(),
+                d.isActive()
+            );
+        }
     }
 }

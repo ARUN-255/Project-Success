@@ -12,26 +12,40 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.data.redis.core.StringRedisTemplate;
+
 import java.time.LocalTime;
 import java.util.List;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Base64;
 
 @Service
 public class RouteService {
+
+    private static final Logger log = LoggerFactory.getLogger(RouteService.class);
+
     private final RouteRepository routeRepository;
     private final BusRepository busRepository;
     private final CollegeRepository collegeRepository;
     private final EntityManager entityManager;
+    private final StringRedisTemplate redisTemplate;
 
     public RouteService(
         RouteRepository routeRepository,
         BusRepository busRepository,
         CollegeRepository collegeRepository,
-        EntityManager entityManager){
+        EntityManager entityManager,
+        StringRedisTemplate redisTemplate){
 
             this.routeRepository = routeRepository;
             this.busRepository = busRepository;
             this.collegeRepository = collegeRepository;
             this.entityManager = entityManager;
+            this.redisTemplate = redisTemplate;
     }
 
     @Transactional(readOnly = true)
@@ -96,13 +110,84 @@ public class RouteService {
                 entityManager.persist(rs);
             }
         }
+        evictRouteStopsCache(route.getId());
         return route;
     }
+    
     @Transactional(readOnly = true)
-    public List<RouteStop> getRouteStops(Long routeId, boolean eveningOrder){
-        String order = eveningOrder ? "DESC" : "ASC";
-        return entityManager.createQuery(
-            "SELECT rs FROM RouteStop rs JOIN FETCH rs.stop WHERE rs.route.id = :routeId ORDER BY rs.sequenceOrder " + order, RouteStop.class).setParameter("routeId", routeId).getResultList();
+public List<RouteStop> getRouteStops(Long routeId, boolean eveningOrder){
+    String key = "route:" + routeId + ":stops:" + (eveningOrder ? "desc" : "asc");
+    try{
+        String cached = redisTemplate.opsForValue().get(key);
+        if (cached != null){
+            return deserializeStops(cached);
+        }
+    }catch (Exception e){
+        log.debug("Redis read failed for {}: {}", key, e.getMessage());
     }
+
+    String order = eveningOrder ? "DESC" : "ASC";
+    List<RouteStop> stops = entityManager.createQuery(
+        "SELECT rs FROM RouteStop rs JOIN FETCH rs.stop WHERE rs.route.id = :routeId ORDER BY rs.sequenceOrder " + order, RouteStop.class)
+        .setParameter("routeId", routeId)
+        .getResultList();
+
+    try{
+        redisTemplate.opsForValue().set(key, serializeStops(stops), Duration.ofMinutes(30));
+    }catch (Exception e){
+        log.debug("Redis write failed for {}: {}", key, e.getMessage());
+    }
+    return stops;
+}
+
+public void evictRouteStopsCache(Long routeId){
+    try{
+        redisTemplate.delete(List.of(
+            "route:" + routeId + ":stops:asc",
+            "route:" + routeId + ":stops:desc"
+        ));
+    }catch (Exception e){
+        log.debug("Redis evict failed for route {}: {}", routeId, e.getMessage());
+    }
+}
+
+private String serializeStops(List<RouteStop> stops){
+    StringBuilder sb = new StringBuilder();
+    for (RouteStop rs : stops){
+        Stop s = rs.getStop();
+        String encodedName = Base64.getEncoder().encodeToString(s.getName().getBytes(StandardCharsets.UTF_8));
+        sb.append(s.getId()).append('|')
+          .append(encodedName).append('|')
+          .append(s.getLatitude()).append('|')
+          .append(s.getLongitude()).append('|')
+          .append(rs.getSequenceOrder()).append('|')
+          .append(rs.getMorningTime() != null ? rs.getMorningTime().toString() : "").append('|')
+          .append(rs.getEveningTime() != null ? rs.getEveningTime().toString() : "").append('\n');
+    }
+    return sb.toString();
+}
+
+private List<RouteStop> deserializeStops(String data){
+    List<RouteStop> result = new ArrayList<>();
+    if (data.isBlank()) return result;
+    for (String line : data.split("\n")){
+        if (line.isBlank()) continue;
+        String[] p = line.split("\\|", -1);
+        Stop s = new Stop();
+        s.setId(Long.parseLong(p[0]));
+        s.setName(new String(Base64.getDecoder().decode(p[1]), StandardCharsets.UTF_8));
+        s.setLatitude(Double.parseDouble(p[2]));
+        s.setLongitude(Double.parseDouble(p[3]));
+
+        RouteStop rs = new RouteStop();
+        rs.setStop(s);
+        rs.setSequenceOrder(Integer.parseInt(p[4]));
+        rs.setMorningTime(p[5].isEmpty() ? null : LocalTime.parse(p[5]));
+        rs.setEveningTime(p[6].isEmpty() ? null : LocalTime.parse(p[6]));
+        result.add(rs);
+    }
+    return result;
+}
+
     public record StopTimeInput(Long stopId, LocalTime morningTime, LocalTime eveningTime) {}
 }

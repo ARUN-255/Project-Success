@@ -14,6 +14,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.Clock;
 import java.time.DayOfWeek;
 import java.time.Duration;
@@ -25,7 +28,9 @@ import java.util.List;
 @Service
 public class EtaService{
 
-    public enum EtaBasis { LIVE, LEARNED, SCHEDULED, NOT_STARTED, PASSED}
+    public enum EtaBasis { LIVE, LEARNED, SCHEDULED, NOT_STARTED, NO_SIGNAL, NO_SERVICE, PASSED}
+
+    private static final Logger log = LoggerFactory.getLogger(EtaService.class);
 
     private final TripRepository tripRepository;
     private final RouteService routeService;
@@ -52,10 +57,44 @@ public class EtaService{
 
     @Transactional(readOnly = true)
     public EtaResponse estimateEta(Long routeId, Long stopId, Trip.TripType tripType){
+        if(tripType == null){
+            return new EtaResponse(0, null, EtaBasis.NO_SERVICE);
+        }
+
+        String etaKey = "eta:live:" + routeId + ":" + stopId + ":" + tripType.name();
+        try{
+            String cached = redisTemplate.opsForValue().get(etaKey);
+            if (cached != null){
+                String[] p = cached.split("\\|", -1);
+                long sec = Long.parseLong(p[0]);
+                LocalTime time = p[1].isEmpty() ? null : LocalTime.parse(p[1]);
+                EtaBasis basis = EtaBasis.valueOf(p[2]);
+                return new EtaResponse(sec, time, basis);
+            }
+        }catch (Exception e){
+            log.debug("Redis ETA read failed for {}: {}", etaKey, e.getMessage());
+        }
+
+        EtaResponse result = computeEta(routeId, stopId, tripType);
+
+        try{
+            String serialized = result.etaSeconds() + "|"
+                + (result.arrivalTime() != null ? result.arrivalTime().toString() : "") + "|"
+                + result.basis().name();
+            redisTemplate.opsForValue().set(etaKey, serialized, Duration.ofSeconds(3));
+        }catch (Exception e){
+            log.debug("Redis ETA write failed for {}: {}", etaKey, e.getMessage());
+        }
+        return result;
+    }
+
+    private EtaResponse computeEta(Long routeId, Long stopId, Trip.TripType tripType){
         boolean evening = tripType == Trip.TripType.EVENING;
         List<RouteStop> stops = routeService.getRouteStops(routeId, evening);
         RouteStop target = stops.stream()
-        .filter(rs -> rs.getStop().getId().equals(stopId)).findFirst().orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Stop not on route"));
+            .filter(rs -> rs.getStop().getId().equals(stopId))
+            .findFirst()
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Stop not on route"));
 
         LocalTime now = LocalTime.now(clock);
         LocalTime scheduledTime = evening ? target.getEveningTime() : target.getMorningTime();
@@ -73,6 +112,7 @@ public class EtaService{
                 long etaSeconds = Math.max(0, Math.round((roadMeters / 1000.0) / speedKmh * 3600.0));
                 return new EtaResponse(etaSeconds, now.plusSeconds(etaSeconds), EtaBasis.LIVE);
             }
+            return new EtaResponse(0, null, EtaBasis.NO_SIGNAL);
         }
         Long learnedDelaySeconds = getLearnedDelaySeconds(routeId, stopId, tripType, scheduledTime);
         if(learnedDelaySeconds != null){

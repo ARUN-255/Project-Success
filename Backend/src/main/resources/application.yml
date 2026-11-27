@@ -1,0 +1,59 @@
+server:
+    port: 8080
+    error:
+        include-message: never
+
+spring:
+    application:
+        name: mybus
+
+    datasource:
+        url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5433}/${DB_NAME:mybus}
+        username: ${DB_USER:mybus}
+        password: ${DB_PASSWORD}
+        driver-class-name: org.postgresql.Driver 
+    
+    jpa:
+        hibernate:
+            ddl-auto: validate
+        open-in-view: false
+        properties:
+            hibernate:
+                format_sql: true
+                jdbc:
+                    time_zone: UTC
+
+    flyway:
+        enabled: true
+        locations: classpath:db/migration
+
+    data:
+        redis:
+            host: ${REDIS_HOST:localhost}
+            port: ${REDIS_PORT:6379}
+
+    mail:
+        host: ${MAIL_HOST:smtp.gmail.com}
+        port: ${MAIL_PORT:587}
+        username: ${MAIL_USERNAME:}
+        password: ${MAIL_PASSWORD:}
+        properties:
+            mail:
+                smtp:
+                    auth: true
+                    starttls:
+                        enable: true
+
+app:
+    jwt:
+        secret: ${JWT_SECRET}
+        expiration-ms: 2592000000
+        admin-expiration-ms: 43200000
+    otp:
+        expiration-minutes: 10
+    trip:
+        auto-end-minutes: 5
+        ping-interval-seconds: 3
+    owner:
+        bug-report-email: ${OWNER_EMAIL:}
+    

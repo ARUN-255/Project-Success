@@ -2,19 +2,21 @@ package com.bronzera.mybus.student;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.data.domain.Page;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 
 import java.time.LocalDate;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/students")
+@RequestMapping("/api/v1/students")
 public class StudentController{
 
     private final StudentService studentService;
@@ -26,17 +28,18 @@ public class StudentController{
     }
 
     @GetMapping
-    @Transactional(readOnly = true)
-    public List<StudentResponse> listStudents(
+    public Page<StudentService.StudentResponse> listStudents(
         @RequestParam Long collegeId,
-        @RequestParam(required = false) String department
+        @RequestParam(required = false) String department,
+        @RequestParam(defaultValue = "0") int page,
+        @RequestParam(defaultValue = "50") int size
     ){
-        return studentService.listStudents(collegeId, department).stream().map(StudentResponse::from).toList();
+        return studentService.listStudents(collegeId, department, page, size);
     }
 
     @PostMapping
-    public ResponseEntity<StudentResponse> createStudent(@RequestBody CreateStudentRequest request){
-        Student student = studentService.createStudent(
+    public ResponseEntity<StudentService.StudentResponse> createStudent(@Valid @RequestBody CreateStudentRequest request){
+        StudentService.StudentResponse student = studentService.createStudent(
             request.collegeId(),
             request.regNo(),
             request.name(),
@@ -45,8 +48,9 @@ public class StudentController{
             request.year(),
             request.dob()
         );
-        return ResponseEntity.status(HttpStatus.CREATED).body(StudentResponse.from(student));
+        return ResponseEntity.status(HttpStatus.CREATED).body(student);
     }
+
     @PostMapping("/upload")
     public StudentUploadService.UploadResult uploadCsv(
         @RequestParam Long collegeId,
@@ -57,18 +61,23 @@ public class StudentController{
     }
 
     @PatchMapping("/{id}/active")
-    public StudentResponse setActive(@PathVariable Long id, @RequestParam boolean active){
-        return StudentResponse.from(studentService.setActive(id, active));
+    public StudentService.StudentResponse setActive(@PathVariable Long id, @RequestParam boolean active){
+        return studentService.setActive(id, active);
     }
 
     @PostMapping("/{id}/reset")
-    public StudentResponse resetStudent(@PathVariable Long id){
-        return StudentResponse.from(studentService.resetStudent(id));
+    public StudentService.StudentResponse resetStudent(@PathVariable Long id){
+        return studentService.resetStudent(id);
     }
 
     @PatchMapping("/{id}/share-location")
-    public StudentResponse setShareLocation(@PathVariable Long id, @RequestParam boolean allowed){
-        return StudentResponse.from(studentService.setShareLocationAllowed(id, allowed));
+    public StudentService.StudentResponse setShareLocation(@PathVariable Long id, @RequestParam boolean allowed){
+        return studentService.setShareLocationAllowed(id, allowed);
+    }
+
+    @GetMapping("/{id}/route-pref")
+    public List<StudentService.RoutePrefResponse> getRoutePref(@PathVariable Long id){
+        return studentService.getRoutePreferences(id);
     }
 
     @PutMapping("/{id}/route-pref")
@@ -87,38 +96,13 @@ public class StudentController{
     ) {}
 
     public record CreateStudentRequest(
-        Long collegeId,
-        String regNo,
-        String name,
+        @NotNull Long collegeId,
+        @NotBlank String regNo,
+        @NotBlank String name,
         String address,
-        String department,
-        int year,
-        LocalDate dob
+        @NotBlank String department,
+        @Min(1) @Max(4) int year,
+        @NotNull LocalDate dob
     ) {}
 
-    public record StudentResponse(
-        Long id,
-        Long collegeId,
-        String regNo,
-        String name,
-        String address,
-        String department,
-        int year,
-        String collegeEmail,
-        boolean active 
-    ){
-        public static StudentResponse from(Student s){
-            return new StudentResponse(
-                s.getId(),
-                s.getCollege().getId(),
-                s.getRegNo(),
-                s.getName(),
-                s.getAddress(),
-                s.getDepartment(),
-                s.getYear(),
-                s.getCollegeEmail(),
-                s.isActive()
-            );
-        }
-    }
 }

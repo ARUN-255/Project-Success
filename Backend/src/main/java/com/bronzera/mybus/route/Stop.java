@@ -27,6 +27,8 @@ public class Stop{
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
 
+    public void setId(Long id) { this.id = id; }
+
     public Long getId(){
         return id;
     }

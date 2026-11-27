@@ -16,8 +16,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
 import java.time.LocalDate;
@@ -28,7 +29,7 @@ import java.util.Optional;
 @Service
 public class TripService {
 
-    private static final Log log = LogFactory.getLog(TripService.class);
+    private static final Logger log = LoggerFactory.getLogger(TripService.class);
     private final AlertRepository alertRepository;
 
     private final TripRepository tripRepository;
@@ -140,21 +141,36 @@ public class TripService {
         tripRepository.save(trip);
         deleteRedisLive(tripId);
 
+        LocalDate today = LocalDate.now(clock);
+        if(alertRepository.existsByRouteIdAndAlertTypeAndAlertDateAndTripType(
+            trip.getRoute().getId(), Alert.AlertType.AUTO_ENDED, today, trip.getTripType()
+        )){
+            return;
+        }
+
         Alert alert = new Alert();
         alert.setAlertType(Alert.AlertType.AUTO_ENDED);
         alert.setRoute(trip.getRoute());
         alert.setTrip(trip);
         alert.setAlertDate(LocalDate.now(clock));
         alert.setTripType(trip.getTripType());
+        alert.setAlertDate(today);
         try {
             alertRepository.saveAndFlush(alert);
-        } catch (DataIntegrityViolationException ignored){
-
+        } catch (DataIntegrityViolationException e){
+            log.debug("Alert already recorded: {}", e.getMessage());
         }
     }
 
     @Transactional
     public void recordMissedStart(Long routeId, LocalDate alertDate, Trip.TripType tripType){
+        
+        if(alertRepository.existsByRouteIdAndAlertTypeAndAlertDateAndTripType(
+            routeId, Alert.AlertType.MISSED_START, alertDate, tripType
+        )){
+            return;
+        }
+        
         Route route = routeRepository.findById(routeId).orElse(null);
         if(route == null){
             return;
@@ -166,8 +182,8 @@ public class TripService {
         alert.setTripType(tripType);
         try{
             alertRepository.saveAndFlush(alert);
-        }catch (DataIntegrityViolationException ignored){
-
+        }catch (DataIntegrityViolationException e){
+            log.debug("Missed-start alert already recorded: {}", e.getMessage());
         }
     }
 
@@ -189,14 +205,17 @@ public class TripService {
     public Trip.TripType detectCurrentOrNextTripType(Long routeId) {
         LocalDate today = LocalDate.now(clock);
         LocalTime now = LocalTime.now(clock);
-        RunSchedule s = scheduleRepository.findByRouteIdAndRunDate(routeId, today).orElse(null);
-        if(s != null ){
+        RunSchedule s = scheduleRepository.findByRouteIdAndRunDate(routeId, today)
+        .filter(RunSchedule::isRunning).orElse(null);
+        if(s == null ){
+            return null;
+        }
             Trip.TripType open = detectTripType(s, now);
             if(open != null) return open;
             if(s.getMorningEnd() != null && !now.isAfter(s.getMorningEnd())) return Trip.TripType.MORNING;
             if(s.getEveningEnd() != null) return Trip.TripType.EVENING;
-        }
-        return now.isBefore(LocalTime.NOON) ? Trip.TripType.MORNING : Trip.TripType.EVENING;
+    
+        return null;
     }
 
     private void deleteRedisLive(Long tripId){

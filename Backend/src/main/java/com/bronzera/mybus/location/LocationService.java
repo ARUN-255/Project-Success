@@ -24,6 +24,9 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class LocationService{
@@ -142,7 +145,7 @@ public class LocationService{
                 double prevLon = Double.parseDouble((String) current.get("lon"));
                 long prevTs = Long.parseLong((String) current.get("ts"));
 
-                if(clientTimeMs != null && clientTimeMs < prevTs){
+                if(clientTimeMs != null && clientTimeMs < nowMs - 15_000L){
                     return;
                 }
 
@@ -220,27 +223,68 @@ public class LocationService{
     private void checkStopArrival(Trip trip, double lat, double lon){
         boolean evening = trip.getTripType() == Trip.TripType.EVENING;
         List<RouteStop> stops = routeService.getRouteStops(trip.getRoute().getId(), evening);
+        Set<Long> arrivedIds = getArrivedStopIds(trip.getId());
 
-        @SuppressWarnings("unchecked")
-        List<Number> arrived = entityManager.createNativeQuery("SELECT stop_id FROM stop_arrival WHERE trip_id = :tid").setParameter("tid", trip.getId()).getResultList();
+        List<RouteStop> nextThree = stops.stream()
+            .filter(rs -> !arrivedIds.contains(rs.getStop().getId()))
+            .limit(3)
+            .toList();
 
-        java.util.Set<Long> arrivedIds = new java.util.HashSet<>();
-        for(Number n : arrived) arrivedIds.add(n.longValue());
+        for(RouteStop candidate : nextThree){
+            double dist = distanceMeters(lat, lon, candidate.getStop().getLatitude(), candidate.getStop().getLongitude());
+            if(dist <= 80.0){
+                entityManager.createNativeQuery(
+                    "INSERT INTO stop_arrival (trip_id, stop_id, arrived_at) "
+                    + "VALUES (:tid, :sid, :at) ON CONFLICT DO NOTHING"
+                )
+                .setParameter("tid", trip.getId())
+                .setParameter("sid", candidate.getStop().getId())
+                .setParameter("at", OffsetDateTime.now(clock))
+                .executeUpdate();
 
-        RouteStop nextStop = stops.stream().filter(rs -> !arrivedIds.contains(rs.getStop().getId())).findFirst().orElse(null);
-
-        if(nextStop == null) return;
-
-        double dist = distanceMeters(lat, lon, nextStop.getStop().getLatitude(), nextStop.getStop().getLongitude());
-
-        if(dist <= 80.0){
-            entityManager.createNativeQuery("INSERT INTO stop_arrival (trip_id, stop_id, arrived_at) " + "VALUES (:tid, :sid, :at) ON CONFLICT DO NOTHING")
-            .setParameter("tid", trip.getId())
-            .setParameter("sid", nextStop.getStop().getId())
-            .setParameter("at", OffsetDateTime.now(clock))
-            .executeUpdate();
+                try{
+                    redisTemplate.delete("trip:" + trip.getId() + ":arrived");
+                }catch (Exception e){
+                    log.debug("Redis evict failed for trip {} arrived stops: {}", trip.getId(), e.getMessage());
+                }
+                break;
+            }
         }
     }
+
+    private Set<Long> getArrivedStopIds(Long tripId){
+        String key = "trip:" + tripId + ":arrived";
+        try{
+            String cached = redisTemplate.opsForValue().get(key);
+            if (cached != null){
+                Set<Long> ids = new HashSet<>();
+                if (!cached.isBlank()){
+                    for (String part : cached.split(",")){
+                        ids.add(Long.parseLong(part));
+                    }
+                }
+                return ids;
+        }
+    }catch (Exception e){
+        log.debug("Redis read failed for {}: {}", key, e.getMessage());
+    }
+
+    @SuppressWarnings("unchecked")
+    List<Number> arrived = entityManager.createNativeQuery("SELECT stop_id FROM stop_arrival WHERE trip_id = :tid")
+        .setParameter("tid", tripId)
+        .getResultList();
+
+    Set<Long> arrivedIds = new HashSet<>();
+    for(Number n : arrived) arrivedIds.add(n.longValue());
+
+    try{
+        String joined = arrivedIds.stream().map(String::valueOf).collect(Collectors.joining(","));
+        redisTemplate.opsForValue().set(key, joined, Duration.ofHours(6));
+    }catch (Exception e){
+        log.debug("Redis write failed for {}: {}", key, e.getMessage());
+    }
+    return arrivedIds;
+}
 
     @Transactional(readOnly = true)
     public LiveLocationResponse getLiveLocationByRoute(Long routeId){

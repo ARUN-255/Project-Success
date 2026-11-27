@@ -10,10 +10,14 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.transaction.annotation.Transactional;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Email;
+
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/admins")
+@RequestMapping("/api/v1/admins")
 public class AdminController{
     private final AdminRepository adminRepository;
     private final CollegeRepository collegeRepository;
@@ -38,7 +42,7 @@ public class AdminController{
         }
 
         @PostMapping
-        public ResponseEntity<AdminResponse> createAdmin(@RequestBody CreateAdminRequest request){
+        public ResponseEntity<AdminResponse> createAdmin(@Valid @RequestBody CreateAdminRequest request){
             if (request.email() == null || request.email().isBlank()|| request.password() == null || request.password().isBlank()){
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email and password are required");
             }
@@ -75,7 +79,7 @@ public class AdminController{
             return AdminResponse.from(adminRepository.save(admin));
         }
 
-        public record CreateAdminRequest(Long collegeId, String email, String password, boolean owner) {}
+        public record CreateAdminRequest(Long collegeId, @NotBlank @Email String email, @NotBlank String password, boolean owner) {}
 
         public record AdminResponse(
             Long id,

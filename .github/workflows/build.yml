@@ -16,4 +16,4 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
       - run: ./mvnw -q -DskipTests package
-          working-directory: Backend
+        working-directory: Backend

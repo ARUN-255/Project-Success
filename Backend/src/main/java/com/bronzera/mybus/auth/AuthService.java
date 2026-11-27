@@ -24,6 +24,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.security.SecureRandom;
 import java.sql.Timestamp;
@@ -306,8 +307,18 @@ public class AuthService {
                 .setParameter("id", otpId)
                 .executeUpdate();
 
+        studentRepository.findByCollegeEmailIgnoreCase(cleanEmail).ifPresent(existing -> {
+            if (!existing.getId().equals(student.getId())){
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already linked to another student");
+            }
+        });
+
         student.setCollegeEmail(cleanEmail);
-        studentRepository.save(student);
+        try{
+            studentRepository.saveAndFlush(student);
+        }catch (DataIntegrityViolationException e){
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already linked to another student");
+        }
 
         String token = jwtService.generateToken(student.getId(), "STUDENT", student.getCollege().getId());
         return new StudentLoginResponse(token, student.getId(), student.getName(), cleanEmail);

@@ -4,10 +4,14 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/buses")
+@RequestMapping("/api/v1/buses")
 public class BusController {
 
     private final BusService busService;
@@ -28,7 +32,7 @@ public class BusController {
     }
 
     @PostMapping
-    public ResponseEntity<BusResponse> createBus(@RequestBody CreateBusRequest request){
+    public ResponseEntity<BusResponse> createBus(@Valid @RequestBody CreateBusRequest request){
         Bus bus = busService.createBus(
             request.collegeId(),
             request.busNumber(),
@@ -45,10 +49,10 @@ public class BusController {
     }
 
     public record CreateBusRequest(
-        Long collegeId,
-        String busNumber,
-        String registrationNumber,
-        String busType,
+        @NotNull Long collegeId,
+        @NotBlank String busNumber,
+        @NotBlank String registrationNumber,
+        @NotBlank String busType,
         String photoUrl
     ){}
 

@@ -6,8 +6,11 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+
 @RestController
-@RequestMapping("/api/schedules")
+@RequestMapping("/api/v1/schedules")
 public class ScheduleController {
     private final ScheduleService scheduleService;
 
@@ -23,10 +26,10 @@ public class ScheduleController {
             return scheduleService.listSchedules(routeId, start, end).stream().map(ScheduleResponse::from).toList();
         }
         @PostMapping
-        public List<ScheduleResponse> upsertSchedules(@RequestBody UpsertSchedulesRequest request){
+        public List<ScheduleResponse> upsertSchedules(@Valid @RequestBody UpsertSchedulesRequest request){
             return scheduleService.bulkUpsertSchedules(request.routeId(), request.days()).stream().map(ScheduleResponse::from).toList();
         }
-        public record UpsertSchedulesRequest(Long routeId, List<ScheduleService.ScheduleDayInput> days){}
+        public record UpsertSchedulesRequest( @NotNull Long routeId, List<ScheduleService.ScheduleDayInput> days){}
 
         public record ScheduleResponse(
             Long id,
