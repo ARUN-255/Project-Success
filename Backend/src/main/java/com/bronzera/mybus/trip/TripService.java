@@ -225,7 +225,7 @@ public class TripService {
         try{
             redisTemplate.delete("trip:" + tripId + ":live");
         } catch (Exception e){
-            log.warn("Could not delete Redis live key for trip {}: {} " + tripId + ": " + e.getMessage());
+            
         }
     }
 

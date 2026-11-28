@@ -11,7 +11,7 @@ import java.time.ZoneId;
 
 @EnableScheduling
 @SpringBootApplication
-@EnableSpringDataWebSupport
+@EnableSpringDataWebSupport(pageSerializationMode = EnableSpringDataWebSupport.PageSerializationMode.VIA_DTO)
 public class MyBusApplication {
 
 	public static void main(String[] args) {

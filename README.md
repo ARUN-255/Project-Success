@@ -35,4 +35,3 @@ From the repo root (`Project-Success/`):
 - `My College Bus/` — Student mobile app (React Native + TypeScript)
 - `My Bus Admin/` — College transport admin web portal (React + Vite)
 - `Bronzera Admin Control/` — Bronzera Labs super-admin portal (React + Vite)
-- `Documents/` — Requirements & reference docs
