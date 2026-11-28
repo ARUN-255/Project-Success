@@ -6,42 +6,39 @@ import org.springframework.web.bind.annotation.*;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
 import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/colleges")
-public class CollegeController{
+public class CollegeController {
 
-    private final CollegeRepository collegeRepository;
+    private final CollegeService collegeService;
 
-    public CollegeController(CollegeRepository collegeRepository){
-        this.collegeRepository = collegeRepository;
+    public CollegeController(CollegeService collegeService) {
+        this.collegeService = collegeService;
     }
 
     @GetMapping
-    public List<College> listColleges(){
-        return collegeRepository.findAll();
+    public List<CollegeService.CollegeResponse> listColleges() {
+        return collegeService.listColleges();
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<College> getCollege(@PathVariable Long id){
-        return collegeRepository.findById(id).map(ResponseEntity::ok).orElse(ResponseEntity.notFound().build());
+    public CollegeService.CollegeResponse getCollege(@PathVariable Long id) {
+        return collegeService.getCollege(id);
     }
 
     @PostMapping
-    public ResponseEntity<?> createCollege(@Valid @RequestBody CreateCollegeRequest request){
-        if (request.name() == null || request.name().isBlank()
-        || request.emailDomain() == null || request.emailDomain().isBlank()){
-            return ResponseEntity.badRequest().body("Name and emailDomain are required");
-        }
-        if (collegeRepository.existsByNameIgnoreCase(request.name().trim())){
-            return ResponseEntity.status(HttpStatus.CONFLICT).body("College already  exists");
-        }
-        College college = new College();
-        college.setName(request.name().trim());
-        college.setEmailDomain(request.emailDomain().trim().toLowerCase());
-        return ResponseEntity.status(HttpStatus.CREATED).body(collegeRepository.save(college));
+    public ResponseEntity<CollegeService.CollegeResponse> createCollege(@Valid @RequestBody CreateCollegeRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(collegeService.createCollege(request.name(), request.emailDomain()));
     }
-    public record CreateCollegeRequest(@NotBlank String name, @NotBlank String emailDomain) {}
+
+    public record CreateCollegeRequest(
+        @NotBlank @Size(max = 200) String name,
+        @NotBlank @Size(max = 100) @Pattern(regexp = "^[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$", message = "Use a bare domain like gct.ac.in") String emailDomain
+    ) {}
 }

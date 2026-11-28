@@ -7,6 +7,8 @@ import org.springframework.web.bind.annotation.*;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
 import java.util.List;
 
@@ -50,10 +52,10 @@ public class BusController {
 
     public record CreateBusRequest(
         @NotNull Long collegeId,
-        @NotBlank String busNumber,
-        @NotBlank String registrationNumber,
-        @NotBlank String busType,
-        String photoUrl
+        @NotBlank @Size(max = 30) String busNumber,
+        @NotBlank @Size(max = 30) String registrationNumber,
+        @NotBlank @Pattern(regexp = "AC|NON_AC" , message = "busType must be AC or NON_AC") String busType,
+        @Size(max = 500) String photoUrl
     ){}
 
     public record  BusResponse(

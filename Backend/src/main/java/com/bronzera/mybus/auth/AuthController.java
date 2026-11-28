@@ -55,37 +55,37 @@ public class AuthController{
     }
 
     public record DriverLoginRequest(
-        @NotBlank String loginId,
-        @NotBlank String password,
-        String deviceId
+        @NotBlank @Size(max = 50) String loginId,
+        @NotBlank @Size(max = 200) String password,
+        @Size(max = 200) String deviceId
     ) {}
 
     public record DriverChangePasswordRequest(
         @NotNull Long driverId,
         @NotNull LocalDate dob,
-        @NotBlank String oldPassword,
-        @NotBlank @Size(min = 8) String newPassword
+        @NotBlank @Size(max = 100) String oldPassword,
+        @NotBlank @Size(min = 8, max = 100) String newPassword
     ) {}
 
     public record AdminLoginRequest(
-        @NotBlank @Email String email,
-        @NotBlank String password
+        @NotBlank @Email @Size(max = 200) String email,
+        @NotBlank @Size(max = 100) String password
     ) {}
 
     public record StudentLookupRequest(
         @NotNull Long collegeId,
-        @NotBlank String regNo,
+        @NotBlank @Size(max = 50) String regNo,
         @NotNull LocalDate dob 
     ) {}
 
     public record SendOtpRequest(
         @NotBlank String lookupToken,
-        @NotBlank @Email String email
+        @NotBlank @Email @Size(max = 200) String email
     ) {}
 
     public record VerifyOtpRequest(
         @NotBlank String lookupToken,
-        @NotBlank @Email String email,
-        @NotBlank String code
+        @NotBlank @Email @Size(max = 200) String email,
+        @NotBlank @Size(max = 10) String code
     ) {}
 }

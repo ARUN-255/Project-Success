@@ -20,6 +20,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.MailException;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -251,7 +253,12 @@ public class AuthService {
             msg.setTo(cleanEmail);
             msg.setSubject("My College Bus - Verification Code");
             msg.setText("Your 6-digit login code is: " + code + " (valid for " + otpExpirationMinutes + " minutes).");
+            try{
             mailSender.send(msg);
+            } catch (MailException e) {
+                log.warn("Failed to sent OTP email to {}: {}", cleanEmail, e.getMessage());
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Could not sent email");
+            }
         } else if (env.acceptsProfiles(Profiles.of("local"))){
             log.info("[LOCAL OTP] {} -> {}", cleanEmail, code);
         } else {
@@ -322,6 +329,16 @@ public class AuthService {
 
         String token = jwtService.generateToken(student.getId(), "STUDENT", student.getCollege().getId());
         return new StudentLoginResponse(token, student.getId(), student.getName(), cleanEmail);
+    }
+
+    @Scheduled(cron = "0 30 3 * * *", zone = "Asia/Kolkata")
+    @Transactional
+    public void cleanupExpiredOtps(){
+        entityManager.createNativeQuery(
+            "DELETE FROM email_otp WHERE expires_at < :cutoff"
+        )
+        .setParameter("cutoff", OffsetDateTime.now(clock).minusDays(1))
+        .executeUpdate();
     }
 
     private Long extractLookupStudentId(String lookupToken) {

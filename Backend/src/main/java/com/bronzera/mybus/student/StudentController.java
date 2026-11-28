@@ -9,6 +9,7 @@ import org.springframework.data.domain.Page;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 
@@ -97,10 +98,10 @@ public class StudentController{
 
     public record CreateStudentRequest(
         @NotNull Long collegeId,
-        @NotBlank String regNo,
-        @NotBlank String name,
-        String address,
-        @NotBlank String department,
+        @NotBlank @Size(max = 50) String regNo,
+        @NotBlank @Size(max = 200) String name,
+        @Size(max = 500) String address,
+        @NotBlank @Size(max = 100) String department,
         @Min(1) @Max(4) int year,
         @NotNull LocalDate dob
     ) {}

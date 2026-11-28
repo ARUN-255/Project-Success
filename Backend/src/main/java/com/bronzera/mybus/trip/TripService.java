@@ -103,9 +103,13 @@ public class TripService {
         try{
             return TripResponse.from(tripRepository.saveAndFlush(trip));
         }catch (DataIntegrityViolationException e) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Trip already running");
+        if (tripRepository.findByRouteIdAndStatus(routeId, Trip.TripStatus.RUNNING).isPresent()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "A trip is already running on this route");
         }
+        throw new ResponseStatusException(HttpStatus.CONFLICT, "Driver already has another running trip");
     }
+}
+
 
     @Transactional
     public TripResponse endTrip(Long tripId, Long actorId, boolean isAdmin){
@@ -152,7 +156,6 @@ public class TripService {
         alert.setAlertType(Alert.AlertType.AUTO_ENDED);
         alert.setRoute(trip.getRoute());
         alert.setTrip(trip);
-        alert.setAlertDate(LocalDate.now(clock));
         alert.setTripType(trip.getTripType());
         alert.setAlertDate(today);
         try {
@@ -222,7 +225,7 @@ public class TripService {
         try{
             redisTemplate.delete("trip:" + tripId + ":live");
         } catch (Exception e){
-            log.warn("Could not delete Redis live key for trip " + tripId + ": " + e.getMessage());
+            log.warn("Could not delete Redis live key for trip {}: {} " + tripId + ": " + e.getMessage());
         }
     }
 

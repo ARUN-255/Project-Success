@@ -4,12 +4,14 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.data.web.config.EnableSpringDataWebSupport;
 
 import java.time.Clock;
 import java.time.ZoneId;
 
 @EnableScheduling
 @SpringBootApplication
+@EnableSpringDataWebSupport
 public class MyBusApplication {
 
 	public static void main(String[] args) {

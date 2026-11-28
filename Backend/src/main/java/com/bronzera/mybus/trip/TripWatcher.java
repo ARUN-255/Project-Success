@@ -11,13 +11,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.time.LocalDateTime;
 
 @Component
 public class TripWatcher {
@@ -52,26 +52,43 @@ public class TripWatcher {
         LocalDate today = LocalDate.now(clock);
         LocalTime now = LocalTime.now(clock);
 
-        checkAutoEnd(now);
+        checkAutoEnd(today, now);
         checkMissedStarts(today, now);
     }
 
-    private void checkAutoEnd(LocalTime now){
+    private void checkAutoEnd(LocalDate today, LocalTime now){
+        OffsetDateTime todayStart = today.atStartOfDay(clock.getZone()).toOffsetDateTime();
+        LocalDateTime nowDateTime = LocalDateTime.of(today, now);
+
         List<Trip> runningTrips = tripRepository.findByStatusWithRouteAndBus(Trip.TripStatus.RUNNING);
         for(Trip trip : runningTrips){
             try{
+                if(trip.getStartedAt() != null && trip.getStartedAt().isBefore(todayStart)){
+                    tripService.autoEndTrip(trip.getId());
+                    continue;
+                }
+
                 String field = trip.getTripType() == Trip.TripType.EVENING ? "eveningTime" : "morningTime";
                 LocalTime lastStopTime = entityManager.createQuery(
-                    "SELECT MAX(rs." + field + ") FROM RouteStop rs WHERE rs.route.id = :routeId",LocalTime.class).setParameter("routeId", trip.getRoute().getId()).getSingleResult();
+                    "SELECT MAX(rs. " + field + ") FROM RouteStop rs WHERE rs.route.id = :routeId", LocalTime.class)
+                    .setParameter("routeId", trip.getRoute().getId()).getSingleResult();
 
-                    if (lastStopTime != null && now.isAfter(lastStopTime.plusMinutes(autoEndMinutes))){
+                    if (lastStopTime != null){
+                    LocalDate tripDate = trip.getStartedAt() != null
+                        ? trip.getStartedAt().atZoneSameInstant(clock.getZone()).toLocalDate()
+                        : today;
+                    LocalDateTime autoEndAt = LocalDateTime.of(tripDate, lastStopTime).plusMinutes(autoEndMinutes);
+                    if (nowDateTime.isAfter(autoEndAt)){
                         tripService.autoEndTrip(trip.getId());
                     }
-            }catch (Exception e){
-                log.warn("Auto-end check failed for trip {}: {}", trip.getId(), e.getMessage());
-            }
+                }
+
+                    }catch (Exception e){
+                        log.warn("Auto-end check failed for trip {}: {}", trip.getId(), e.getMessage());
+                    }
+                }
         }
-    }
+    
 
     private void checkMissedStarts(LocalDate today, LocalTime now) {
         OffsetDateTime dayStart = today.atStartOfDay(clock.getZone()).toOffsetDateTime();
@@ -81,14 +98,14 @@ public class TripWatcher {
         for(RunSchedule s : schedules) {
             try{
                 Long routeId = s.getRoute().getId();
-                if(s.getMorningStart() != null && now.isAfter(s.getMorningStart().plusMinutes(5))){
+                if(s.getMorningStart() != null && s.getMorningEnd() != null && now.isAfter(s.getMorningStart().plusMinutes(5)) && !now.isAfter(s.getMorningEnd())){
                     boolean started = tripRepository.existsByRouteIdAndTripTypeAndStartedAtBetween(routeId, Trip.TripType.MORNING, dayStart, dayEnd);
                     
                     if(!started) {
                         tripService.recordMissedStart(routeId, today, Trip.TripType.MORNING);
                     }
                 }
-                if(s.getEveningStart() != null && now.isAfter(s.getEveningStart().plusMinutes(5))){
+                if(s.getEveningStart() != null && s.getEveningEnd() != null && now.isAfter(s.getEveningStart().plusMinutes(5)) && !now.isAfter(s.getEveningEnd())){
                     boolean started = tripRepository.existsByRouteIdAndTripTypeAndStartedAtBetween(routeId, Trip.TripType.EVENING, dayStart, dayEnd);
                     if(!started) {
                         tripService.recordMissedStart(routeId, today, Trip.TripType.EVENING);

@@ -30,6 +30,12 @@ public class EtaService{
 
     public enum EtaBasis { LIVE, LEARNED, SCHEDULED, NOT_STARTED, NO_SIGNAL, NO_SERVICE, PASSED}
 
+    public record EtaResponse(
+        long etaSeconds,
+        LocalTime arrivalTime,
+        EtaBasis basis
+    ) {}
+
     private static final Logger log = LoggerFactory.getLogger(EtaService.class);
 
     private final TripRepository tripRepository;
@@ -165,9 +171,13 @@ public class EtaService{
         for(Number n : arrived) arrivedIds.add(n.longValue());
 
         int nextIdx = 0;
-        while (nextIdx < stops.size() && arrivedIds.contains(stops.get(nextIdx).getStop().getId())){
-            nextIdx++;
+        for(int i = stops.size() - 1; i >= 0; i--){
+            if(arrivedIds.contains(stops.get(i).getStop().getId())){
+                nextIdx = i + 1;
+                break;
+            }
         }
+
         int targetIdx = stops.indexOf(target);
         if(nextIdx > targetIdx){
             return 0.0;
@@ -187,9 +197,13 @@ public class EtaService{
         String dayGroup = isSaturday ? "SAT" : "WKDAY";
         String cacheKey = "eta:delay:" + routeId + ":" + stopId + ":" + tripType.name() + ":" + dayGroup;
 
-        String cached = redisTemplate.opsForValue().get(cacheKey);
-        if(cached  != null){
-            return "NONE".equals(cached) ? null : Long.parseLong(cached);
+        try{
+            String cached = redisTemplate.opsForValue().get(cacheKey);
+            if(cached  != null){
+                return "NONE".equals(cached) ? null : Long.parseLong(cached);
+            }
+        }catch (Exception e){
+            log.debug("Redis dalay read failed for  {}: {}", cacheKey, e.getMessage());
         }
 
         String timeCol = tripType == Trip.TripType.EVENING ? "rs.evening_time" : "rs.morning_time";
@@ -210,17 +224,25 @@ public class EtaService{
             .setParameter("sid", stopId)
             .setParameter("tt", tripType.name())
             .getResultList();
-
-            if(!rows.isEmpty()){
-                long count = ((Number) rows.get(0)[0]).longValue();
-                if(count >= 5 && rows.get(0)[1] != null){
-                    long avgDelay = Math.round(((Number) rows.get(0)[1]).doubleValue());
+        
+        if(!rows.isEmpty()){
+            long count = ((Number) rows.get(0)[0]).longValue();
+            if(count >= 5 && rows.get(0)[1] != null){
+                long avgDelay = Math.round(((Number) rows.get(0)[1]).doubleValue());
+                try{
                     redisTemplate.opsForValue().set(cacheKey, String.valueOf(avgDelay), Duration.ofMinutes(10));
-                    return avgDelay;
+                }catch (Exception e){
+                    log.debug("Redis delay write failed for {}: {}", cacheKey, e.getMessage());
                 }
+                return avgDelay;
             }
+        }
+        try{
             redisTemplate.opsForValue().set(cacheKey, "NONE", Duration.ofMinutes(10));
-            return null;
-    } 
-    public record EtaResponse(long etaSeconds, LocalTime arrivalTime, EtaBasis basis) {}
+        }catch (Exception e){
+            log.debug("Redis delay write failed for {}: {}", cacheKey, e.getMessage());
+        }
+        return null;
+    }
+   
 }

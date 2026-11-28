@@ -225,10 +225,14 @@ public class LocationService{
         List<RouteStop> stops = routeService.getRouteStops(trip.getRoute().getId(), evening);
         Set<Long> arrivedIds = getArrivedStopIds(trip.getId());
 
-        List<RouteStop> nextThree = stops.stream()
-            .filter(rs -> !arrivedIds.contains(rs.getStop().getId()))
-            .limit(3)
-            .toList();
+        int nextIdx = 0;
+        for (int i = stops.size() - 1; i >= 0; i--){
+            if(arrivedIds.contains(stops.get(i).getStop().getId())){
+                nextIdx = i + 1;
+                break;
+            }
+        }
+        List<RouteStop> nextThree = stops.subList(nextIdx, Math.min(nextIdx + 3, stops.size()));
 
         for(RouteStop candidate : nextThree){
             double dist = distanceMeters(lat, lon, candidate.getStop().getLatitude(), candidate.getStop().getLongitude());
@@ -279,7 +283,7 @@ public class LocationService{
 
     try{
         String joined = arrivedIds.stream().map(String::valueOf).collect(Collectors.joining(","));
-        redisTemplate.opsForValue().set(key, joined, Duration.ofHours(6));
+        redisTemplate.opsForValue().set(key, joined, Duration.ofSeconds(60));
     }catch (Exception e){
         log.debug("Redis write failed for {}: {}", key, e.getMessage());
     }

@@ -8,6 +8,8 @@ import java.util.List;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.Size;
 
 @RestController
 @RequestMapping("/api/v1/schedules")
@@ -29,7 +31,7 @@ public class ScheduleController {
         public List<ScheduleResponse> upsertSchedules(@Valid @RequestBody UpsertSchedulesRequest request){
             return scheduleService.bulkUpsertSchedules(request.routeId(), request.days()).stream().map(ScheduleResponse::from).toList();
         }
-        public record UpsertSchedulesRequest( @NotNull Long routeId, List<ScheduleService.ScheduleDayInput> days){}
+        public record UpsertSchedulesRequest( @NotNull Long routeId, @NotEmpty @Size(max = 62) @Valid List<ScheduleService.ScheduleDayInput> days){}
 
         public record ScheduleResponse(
             Long id,

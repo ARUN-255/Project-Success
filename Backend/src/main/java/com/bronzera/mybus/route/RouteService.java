@@ -6,6 +6,7 @@ import com.bronzera.mybus.college.College;
 import com.bronzera.mybus.college.CollegeRepository;
 
 import jakarta.persistence.EntityManager;
+import jakarta.validation.constraints.NotNull;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -22,6 +23,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashSet;
+import java.util.Set;
 
 @Service
 public class RouteService {
@@ -54,10 +57,9 @@ public class RouteService {
     }
 
     @Transactional
-    public Stop createStop(Long collegeId, String name, double latitude, double longitude){
-        
-        if(name == null || name.isBlank()){
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Stop name is required");
+    public Stop createStop(Long collegeId, String name, Double latitude, Double longitude){
+        if(name == null || name.isBlank() || latitude == null || longitude == null){
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Stop name, latitude, and longitude are required");
         }
         
         College college = collegeRepository.findById(collegeId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "College not found"));
@@ -90,55 +92,76 @@ public class RouteService {
         route.setName(name.trim());
         route = routeRepository.save(route);
 
-        if (stops != null){
-            for (int i = 0; i < stops.size(); i++){
-                StopTimeInput item = stops.get(i);
-                Stop stop = entityManager.find(Stop.class, item.stopId());
-                if (stop == null){
-                    throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Stop not found: " + item.stopId());
-                }
-                if(!stop.getCollege().getId().equals(bus.getCollege().getId())){
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Stop does not belong to the bus's college");
-                }
+        if (stops == null || stops.isEmpty()){
+         throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "At least one stop is required");
+     }
 
-                RouteStop rs = new RouteStop();
-                rs.setRoute(route);
-                rs.setStop(stop);
-                rs.setSequenceOrder(i + 1);
-                rs.setMorningTime(item.morningTime());
-                rs.setEveningTime(item.eveningTime());
-                entityManager.persist(rs);
-            }
-        }
+     Set<Long> seenStopIds = new HashSet<>();
+     LocalTime prevMorning = null;
+     LocalTime prevEvening = null;
+
+     for (int i = 0; i < stops.size(); i++){
+         StopTimeInput item = stops.get(i);
+         if (item == null || item.stopId() == null || item.morningTime() == null || item.eveningTime() == null){
+             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Each stop needs stopId, morningTime, and eveningTime");
+         }
+         if (!seenStopIds.add(item.stopId())){
+             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Duplicate stop on route: " + item.stopId());
+         }
+         if (prevMorning != null && !item.morningTime().isAfter(prevMorning)){
+             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Morning stop times must be strictly increasing");
+         }
+         if (prevEvening != null && !item.eveningTime().isBefore(prevEvening)){
+             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Evening stop times must increase in reverse stop order");
+         }
+         prevMorning = item.morningTime();
+         prevEvening = item.eveningTime();
+
+         Stop stop = entityManager.find(Stop.class, item.stopId());
+         if (stop == null){
+             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Stop not found: " + item.stopId());
+         }
+         if(!stop.getCollege().getId().equals(bus.getCollege().getId())){
+             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Stop does not belong to the bus's college");
+         }
+
+         RouteStop rs = new RouteStop();
+         rs.setRoute(route);
+         rs.setStop(stop);
+         rs.setSequenceOrder(i + 1);
+         rs.setMorningTime(item.morningTime());
+         rs.setEveningTime(item.eveningTime());
+         entityManager.persist(rs);
+     }
         evictRouteStopsCache(route.getId());
         return route;
     }
     
     @Transactional(readOnly = true)
-public List<RouteStop> getRouteStops(Long routeId, boolean eveningOrder){
-    String key = "route:" + routeId + ":stops:" + (eveningOrder ? "desc" : "asc");
-    try{
-        String cached = redisTemplate.opsForValue().get(key);
-        if (cached != null){
-            return deserializeStops(cached);
+    public List<RouteStop> getRouteStops(Long routeId, boolean eveningOrder){
+        String key = "route:" + routeId + ":stops:" + (eveningOrder ? "desc" : "asc");
+        try{
+            String cached = redisTemplate.opsForValue().get(key);
+            if (cached != null){
+                return deserializeStops(cached);
+            }
+        }catch (Exception e){
+            log.debug("Redis read failed for {}: {}", key, e.getMessage());
         }
-    }catch (Exception e){
-        log.debug("Redis read failed for {}: {}", key, e.getMessage());
-    }
 
-    String order = eveningOrder ? "DESC" : "ASC";
-    List<RouteStop> stops = entityManager.createQuery(
-        "SELECT rs FROM RouteStop rs JOIN FETCH rs.stop WHERE rs.route.id = :routeId ORDER BY rs.sequenceOrder " + order, RouteStop.class)
-        .setParameter("routeId", routeId)
-        .getResultList();
+        String order = eveningOrder ? "DESC" : "ASC";
+        List<RouteStop> stops = entityManager.createQuery(
+            "SELECT rs FROM RouteStop rs JOIN FETCH rs.stop WHERE rs.route.id = :routeId ORDER BY rs.sequenceOrder " + order, RouteStop.class)
+            .setParameter("routeId", routeId)
+            .getResultList();
 
-    try{
-        redisTemplate.opsForValue().set(key, serializeStops(stops), Duration.ofMinutes(30));
-    }catch (Exception e){
-        log.debug("Redis write failed for {}: {}", key, e.getMessage());
+        try{
+            redisTemplate.opsForValue().set(key, serializeStops(stops), Duration.ofMinutes(30));
+        }catch (Exception e){
+            log.debug("Redis write failed for {}: {}", key, e.getMessage());
+        }
+        return stops;
     }
-    return stops;
-}
 
 public void evictRouteStopsCache(Long routeId){
     try{
@@ -189,5 +212,5 @@ private List<RouteStop> deserializeStops(String data){
     return result;
 }
 
-    public record StopTimeInput(Long stopId, LocalTime morningTime, LocalTime eveningTime) {}
+    public record StopTimeInput(@NotNull Long stopId, @NotNull LocalTime morningTime, @NotNull LocalTime eveningTime) {}
 }

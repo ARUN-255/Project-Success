@@ -54,14 +54,14 @@ public class DriverController {
 
     public record CreateDriverRequest(
         @NotNull Long collegeId,
-        @NotBlank String loginId, 
-        @NotBlank String name, 
-        @NotBlank @Size(min = 8) String password, 
+        @NotBlank @Size(max = 50) String loginId, 
+        @NotBlank @Size(max = 200) String name, 
+        @NotBlank @Size(min = 8, max = 100) String password, 
         @NotNull LocalDate dob) {}
 
     public record ResetPasswordRequest(
         @NotNull LocalDate dob, 
-        @NotBlank @Size(min = 8) String newPassword) {}
+        @NotBlank @Size(min = 8, max = 100) String newPassword) {}
 
     
 }
